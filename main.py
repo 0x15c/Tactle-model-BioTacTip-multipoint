@@ -10,14 +10,16 @@ from scipy.interpolate import splprep, splev
 import csv
 from datetime import datetime
 # Mask and area limitation
-radius = 240
-center = (180, 240)
+radius = 160 # Modification: 240 -> 160
+center = (175, 175) # Modification: (180, 240) -> (175, 175)
+# Above Modification is made due to the diff. preprocessing methods of video, compared to the author.
+
 
 # Camera get
 #cap = cv.VideoCapture(1)
 #ret, frame = cap.read()
 #time.sleep(1)
-video_file_path = 'original_processed_3.avi'  # Replace with your video file path
+video_file_path = 'output.mp4'  # Replace with your video file path
 cap = cv.VideoCapture(video_file_path)
 if not cap.isOpened():
     print("Can't open the camera")
@@ -69,17 +71,20 @@ with open('intensity.csv', 'w', newline='') as csvfile:
         mask = np.zeros((350, 350), dtype=np.uint8)
         cv.circle(mask, center, radius, (255), -1)
         circular_cropped = cv.bitwise_and(gray_frame, gray_frame, mask=mask)
-        dst2 = cv.medianBlur(circular_cropped, 13)
+        dst2 = cv.medianBlur(circular_cropped, 13) # dst2 is median blurred original image
         out_original.write(dst2)
-        coordinates = np.column_stack(np.where(dst2 > 50))
-        intensities = dst2[dst2 > 50]
+        coordinates = np.column_stack(np.where(dst2 > 50)) # Extracts destination pixel coordinate whose illuminance > 50
+        intensities = dst2[dst2 > 50] # give the corresponding illum. val.
 
         # Density-based spatial clustering of application with noisess
         if len(coordinates) > 0:
             db = DBSCAN(eps=70, min_samples=3).fit(coordinates)
             labels = db.labels_
+            # labels_ : ndarray of shape (n_samples)
+            # Cluster labels for each point in the dataset given to fit().
+            # Noisy samples are given the label -1.
             num_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-            print(f'Number of clusters: {num_clusters}')
+            # print(f'Number of clusters: {num_clusters}')
 
             if num_clusters < 1:
                 print("No valid clusters found")
@@ -90,21 +95,24 @@ with open('intensity.csv', 'w', newline='') as csvfile:
                 continue
 
             # Use different colors to show results of clustering
-            clustered_image = cv.cvtColor(dst2, cv.COLOR_GRAY2BGR)
+            clustered_image = cv.cvtColor(dst2, cv.COLOR_GRAY2BGR) # Restore image from Y channel
             white_background = np.ones_like(clustered_image) * 255
             heatmap = np.ones_like(clustered_image) * 255
             colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 255, 255)]  # BGR format: blue, green, red, yellow
             cluster_info = []
             overlay = np.zeros_like(white_background, dtype=np.uint8)
 
-            for k, col in zip(set(labels), colors):
+            for k, col in zip(set(labels), colors): # Put labels on color
                 if k == -1:
                     continue
 
-                class_member_mask = (labels == k)
-                cluster_points = coordinates[class_member_mask]
+                class_member_mask = (labels == k) # For each label k (i.e. the classification) pick up coordinates of those pts.
+                cluster_points = coordinates[class_member_mask] # n by 2 arrray, n is # of clustered pts.
                 centroids = np.mean(cluster_points, axis=0)
                 x_c, y_c = int(centroids[0]), int(centroids[1])
+
+                # DEBUG
+                # cv.imshow("DEBUG", dst2)
 
                 # Determine the region and set color
                 if x_c < dst2.shape[0] // 2 and y_c < dst2.shape[1] // 2:
@@ -118,20 +126,26 @@ with open('intensity.csv', 'w', newline='') as csvfile:
 
                 # Draw the centroid
                 cv.circle(white_background, (y_c, x_c), 10, color, -1)
-                if len(cluster_points) >= 3:
+                if len(cluster_points) >= 3: # Draw the convex polygon
                     try:
                         hull = ConvexHull(cluster_points, qhull_options='QJ')
-                        hull_points = cluster_points[hull.vertices]
-                        hull_points = np.array([[int(y), int(x)] for x, y in hull_points], np.int32)
-                        hull_points = hull_points.reshape((-1, 1, 2))
+                        hull_points = np.array([[int(y), int(x)] for x, y in cluster_points[hull.vertices]], dtype=np.int32)
+                        # hull_points1 = hull_points.reshape((-1, 1, 2)) ??????
+                        # hull_points1 = hull_points.reshape(-1, 2)
 
-                        hull_points = hull_points.reshape(-1, 2)
-                        tck, u = splprep([hull_points[:, 0], hull_points[:, 1]], s=4, per=True)
+                        # # Spline
+                        tck, u = splprep([hull_points[:, 0], hull_points[:, 1]], k=2, s=4, per=True)
                         u_new = np.linspace(u.min(), u.max(), 50)
                         x_new, y_new = splev(u_new, tck, der=0)
-                        smooth_hull_points = np.vstack((x_new, y_new)).T
-                        smooth_hull_points = np.array([[int(y), int(x)] for y, x in smooth_hull_points], np.int32)
-                        smooth_hull_points = smooth_hull_points.reshape((-1, 1, 2))
+                        # smooth_hull_points = np.vstack((x_new, y_new)).T
+                        # smooth_hull_points1 = np.array([[(y), (x)] for y, x in smooth_hull_points])
+                        # smooth_hull_points2 = smooth_hull_points1.reshape((-1, 1, 2))
+                        # smooth_hull_points3 = smooth_hull_points2.astype(int)
+                        smooth_hull_points = (
+                                                np.vstack((x_new, y_new)).T
+                                                .astype(float)
+                                                .reshape(-1, 2)
+                                                .astype(int))
 
                         cv.fillPoly(overlay, [smooth_hull_points], color)
 
@@ -139,22 +153,24 @@ with open('intensity.csv', 'w', newline='') as csvfile:
                         print(f"Error in ConvexHull computation: {e}")
 
                 # Calculate intensity
+                # @TODO Intensity can be normalized maybe
                 cluster_intensity = np.sum(dst2[cluster_points[:, 0], cluster_points[:, 1]])
                 cluster_info.append((color, cluster_intensity, (y_c, x_c)))
 
                 # Calculate area
                 cluster_mask = np.zeros_like(dst2, dtype=np.uint8)
-                cluster_mask[cluster_points[:, 0], cluster_points[:, 1]] = 1
+                cluster_mask[cluster_points[:, 0], cluster_points[:, 1]] = 1 
                 cluster_area = np.sum(cluster_mask)
                 cluster_info[-1] += (cluster_area,)
 
             # Write data to CSV
-            utc_time = datetime.utcnow().strftime('%H:%M:%S.%f')[:-3]  # Format UTC time as HH:MM:SS.sss
+            utc_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]  # Format UTC time as HH:MM:SS.sss
             row = [utc_time]
             for info in cluster_info:
                   row.extend([info[0], info[1], info[2]])
             csvwriter.writerow(row)
 
+            # Code below will produce white_background, i.e. the second image in the 1st row
             cigema = 0.4
             cv.addWeighted(overlay, cigema, white_background, 1 - cigema, 0, white_background)
             out_colormark.write(white_background)
@@ -185,7 +201,8 @@ with open('intensity.csv', 'w', newline='') as csvfile:
             cluster_centroids = []
             cluster_area = []
 
-            for k in set(labels):
+            for k in set(labels): # labels: db_labels, i.e. DBSCAN labeling, e.g. pts labelled 0 are clustered in one set
+                # use of set: count the # of classifications
                 if k == -1:
                     continue
 
@@ -193,10 +210,11 @@ with open('intensity.csv', 'w', newline='') as csvfile:
                 class_member_mask = (labels == k)
                 cluster_points = coordinates[class_member_mask]
 
-                cluster_img = np.zeros_like(cv.cvtColor(dst2, cv.COLOR_GRAY2BGR))
-
-                for x, y in cluster_points:
-                    cluster_img[x, y] = cv.cvtColor(dst2, cv.COLOR_GRAY2BGR)[x, y]
+                # cluster_img = np.zeros_like(cv.cvtColor(dst2, cv.COLOR_GRAY2BGR))
+                # cluster_img = np.zeros((350,350,3),np.uint8)
+                # for x, y in cluster_points:
+                cluster_img = cv.cvtColor(dst2, cv.COLOR_GRAY2BGR)
+                
                 cluster_img_resized = cv.resize(cluster_img, (220, 180))
                 cluster_imgs.append(cluster_img_resized)
 
