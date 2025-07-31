@@ -10,16 +10,16 @@ from scipy.ndimage import gaussian_filter
 from sklearn.cluster import DBSCAN
 
 # Mask and area limitation
-radius = 240
-center = (180, 240)
-video_file_path = 'multi-original_processed.avi'  # Replace with your video file path
+radius = 160
+center = (175, 175)
+video_file_path = 'output.mp4'  # Replace with your video file path
 cap = cv.VideoCapture(video_file_path)
 
 fps = cap.get(cv.CAP_PROP_FPS)
 fourcc = cv.VideoWriter_fourcc(*'XVID')  # Codec for MP4
 out_heatmap = cv.VideoWriter('heatmap_multi.avi', fourcc, fps, (350, 350), True)  # False for grayscale
 
-
+# Magic number
 def area_to_depth(area):
     return 0.6736 * np.power(area, 0.3506)
 
@@ -40,81 +40,91 @@ while True:
     intensities = dst2[dst2 > 50]
 
     if len(coordinates) > 0:
-        db = DBSCAN(eps=70, min_samples=3).fit(coordinates)
+        db = DBSCAN(eps=70, min_samples=3).fit(coordinates) # min_samples is miniPts
         labels = db.labels_
         num_clusters = len(set(labels)) - (1 if -1 in labels else 0)
         print(f'Number of clusters: {num_clusters}')
         heatmap_bg = np.zeros_like(dst2, dtype=np.float32)
 
-        for k in set(labels):
-            if k == -1:
-                continue
 
-            class_member_mask = (labels == k)
-            cluster_points = coordinates[class_member_mask]
+        # class_member_mask = (labels == k)
+        # cluster_points = coordinates[class_member_mask]
 
-            cluster_img = np.zeros_like(dst2)
-            for x, y in cluster_points:
-                cluster_img[x, y] = dst2[x, y]
+        # cluster_img = np.zeros_like(dst2)
+        # for x, y in cluster_points:
+        cluster_img = dst2
 
-            _, binary_image = cv.threshold(cluster_img, 50, 255, cv.THRESH_BINARY)
-            contours, _ = cv.findContours(binary_image, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-            if not contours:
-                print("No contours found")
-                continue
+        _, binary_image = cv.threshold(cluster_img, 50, 255, cv.THRESH_BINARY)
+        # Notice that contours are not clustered
+        contours, _ = cv.findContours(binary_image, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            print("No contours found")
+            continue
 
-            depths = []
-            centroids = []
-            for contour in contours:
-                area = cv.contourArea(contour)
-                depth = area_to_depth(area)  # Convert area to depth
-                if depth > 0:
-                    M = cv.moments(contour)
-                    if M['m00'] != 0:
-                        cx = int(M['m10'] / M['m00'])
-                        cy = int(M['m01'] / M['m00'])
-                        centroids.append((cx, cy))
-                        depths.append(depth)  # Store depth
+        # cv.imshow("contours",cv.drawContours(dst2,contours,-1,(255,255,0),3))
 
-            sorted_indices = np.argsort(depths)[::-1]
-            sorted_depths = np.array(depths)[sorted_indices]
-            sorted_centroids = np.array(centroids)[sorted_indices]
+        depths = []
+        centroids = []
+        for contour in contours:
+            area = cv.contourArea(contour)
+            depth = area_to_depth(area)  # Convert area to depth
+            if depth > 0:
+                M = cv.moments(contour) # 1st-order moments are img. geometric centers
+                if M['m00'] != 0:
+                    cx = int(M['m10'] / M['m00'])
+                    cy = int(M['m01'] / M['m00'])
+                    centroids.append((cx, cy))
+                    depths.append(depth)  # Store depth
 
-            all_points = np.vstack([contour.reshape(-1, 2) for contour in contours])
+        sorted_indices = np.argsort(depths)[::-1]
+        sorted_depths = np.array(depths)[sorted_indices]
+        sorted_centroids = np.array(centroids)[sorted_indices]
 
-            overlay = np.zeros_like(cluster_img, dtype=np.uint8)
+        all_contour_points = np.vstack([contour.reshape(-1, 2) for contour in contours])
 
-            try:
-                hull = ConvexHull(all_points)
-                hull_points = all_points[hull.vertices]
-                hull_points = np.array([[int(x), int(y)] for x, y in hull_points], np.int32)
-                hull_points = hull_points.reshape((-1, 1, 2))
+        overlay = np.zeros_like(cluster_img, dtype=np.uint8)
 
-                cv.fillPoly(overlay, [hull_points], (255, 255, 255))
+        try:
+            """ Contour is sparce, closed curve surrounding marker points
+            
+            """
+            hull = ConvexHull(all_contour_points)
+            hull_points = all_contour_points[hull.vertices].astype(np.int32).reshape((-1,1,2))
+            # hull_alt = ConvexHull(sorted_centroids)
+            # hull_pts_alt = sorted_centroids[hull_alt.vertices].astype(np.int32).reshape((-1,1,2))
 
-                overlay_mask = overlay > 0
+            cv.fillPoly(overlay, [hull_points], (255, 255, 255))
+            cv.imshow("overlay",overlay) # test
 
-                x = np.linspace(0, cluster_img.shape[1] - 1, cluster_img.shape[1])
-                y = np.linspace(0, cluster_img.shape[0] - 1, cluster_img.shape[0])
-                grid_x, grid_y = np.meshgrid(x, y)
+            overlay_mask = overlay > 0
 
-                points = np.array(sorted_centroids)
-                values = np.array(sorted_depths)
+            # cluster_img is dst2 for now, the median blurred image of gray scale image
+            # this initialzation is not necessary for every loop
+            x = np.linspace(0, cluster_img.shape[1] - 1, cluster_img.shape[1])
+            y = np.linspace(0, cluster_img.shape[0] - 1, cluster_img.shape[0])
+            grid_x, grid_y = np.meshgrid(x, y)
 
-                grid_z = griddata(points, values, (grid_x, grid_y), method='cubic', fill_value=values.min())
-                grid_z = np.nan_to_num(grid_z)
+            points = np.array(sorted_centroids)
+            values = np.array(sorted_depths)
 
-                heatmap_data_masked = grid_z.copy()
-                heatmap_data_masked[~overlay_mask] = 0
+            # QHull throws exception here
+            # Obtain an interpolated graph of ((c_x, c_y), depth) tuple, c is for centroids.
+            grid_z = griddata(points, values, (grid_x, grid_y), method='linear', fill_value=values.min())
+            grid_z = np.nan_to_num(grid_z)
+            # Mask out unwanted zone, original -> median blur -> dst2 = cluster_img
+            # overlay -> filled with cluster polygon(i.e. the activated zone) -> overlay_mask
+            heatmap_data_masked = grid_z.copy()
+            heatmap_data_masked[~overlay_mask] = 0
+            smooth_heatmap = gaussian_filter(heatmap_data_masked, sigma=20)
+            smooth_heatmap = smooth_heatmap * 0.75
+            smooth_heatmap[smooth_heatmap > 1] = 1
 
-                smooth_heatmap = gaussian_filter(heatmap_data_masked, sigma=20)
-                smooth_heatmap = smooth_heatmap / 7
-                smooth_heatmap[smooth_heatmap > 1] = 1
+            heatmap_bg += smooth_heatmap
+            cv.imshow("smooth_heatmap",cv.applyColorMap((smooth_heatmap * 255).astype(np.uint8), cv.COLORMAP_JET))
 
-                heatmap_bg += smooth_heatmap
-
-            except QhullError as e:
-                print(f"Error in ConvexHull computation: {e}")
+        except QhullError as e:
+            print(f"Error in ConvexHull computation: {e}")
 
         heatmap_bg = heatmap_bg if num_clusters > 0 else np.zeros_like(dst2, dtype=np.float32)
 
