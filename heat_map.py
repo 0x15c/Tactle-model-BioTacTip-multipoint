@@ -29,7 +29,6 @@ while True:
         print("End of video stream or error reading frame.")
         break
     gray_frame = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
-
     mask = np.zeros((350, 350), dtype=np.uint8)
     cv.circle(mask, center, radius, (255), -1)
     circular_cropped = cv.bitwise_and(gray_frame, gray_frame, mask=mask)

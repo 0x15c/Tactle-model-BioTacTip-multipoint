@@ -36,12 +36,24 @@ crop_offset_y = -8
 cropped_limits = [[cnt[0]-crop_px+crop_offset_x,cnt[1]-crop_py+crop_offset_y],[cnt[0]+crop_px+crop_offset_x,cnt[1]+crop_py+crop_offset_y]]
 cropped_size = [2*crop_px, 2*crop_py]
 
+# illuminance correct mask, makes darker at edge
+def create_radial_mask(size, center=None, max_value=60, power=2):
+    h, w = (size, size) if isinstance(size, int) else size
+    cx, cy = (w//2, h//2) if center is None else center
+    y, x = np.ogrid[:h, :w]
+    distance = np.sqrt((x - cx)**2 + (y - cy)**2)
+    normalized = distance / np.sqrt(cx**2 + cy**2)
+    return np.clip((normalized ** power) * max_value, 0, max_value).astype(np.uint8)
+
+o_ring_mask = create_radial_mask((350, 350), max_value=245)
+
+
 # camera settings
 cap.set(cv.CAP_PROP_FRAME_WIDTH, video_w)
 cap.set(cv.CAP_PROP_FRAME_HEIGHT, video_h)
-cap.set(cv.CAP_PROP_EXPOSURE, -8)
+cap.set(cv.CAP_PROP_EXPOSURE, -7.8)
 cap.set(cv.CAP_PROP_BRIGHTNESS, 0)
-cap.set(cv.CAP_PROP_CONTRAST, 60)
+cap.set(cv.CAP_PROP_CONTRAST, 64)
 cap.set(cv.CAP_PROP_SATURATION, 60)
 cap.set(cv.CAP_PROP_HUE, 0)
 cap.set(cv.CAP_PROP_GAIN, 0)
@@ -50,6 +62,8 @@ cap.set(cv.CAP_PROP_GAIN, 0)
 # CAP_PROP_SATURATION: 60.0
 # CAP_PROP_HUE: 0.0
 # CAP_PROP_GAIN: 0.0
+
+cv.imshow('o_ring_mask',o_ring_mask)
 
 if not cap.isOpened():
     print("Can't open the camera")
@@ -89,7 +103,11 @@ with open('intensity.csv', 'w', newline='') as csvfile:
                         'Cluster2_Intensity', 'Cluster2_Centroid', 'Cluster2_Area',
                         'Cluster3_Intensity', 'Cluster3_Centroid', 'Cluster3_Area'])  # CSV header
 
-    # Read frame in circle and output the clustering results
+    # # Capture initial frame used for comparision
+    # ret, init_frame = cap.read()
+    # if not ret:
+    #     print("Can't receive the video frame")
+    # Read frame in circle and output the clustering results       
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -102,11 +120,14 @@ with open('intensity.csv', 'w', newline='') as csvfile:
 
         mask = np.zeros((350, 350), dtype=np.uint8)
         cv.circle(mask, center, radius, (255), -1)
-        circular_cropped = cv.bitwise_and(gray_frame, gray_frame, mask=mask)
+        gray_frame_corrected = cv.subtract(gray_frame,o_ring_mask)
+        circular_cropped = cv.bitwise_and(gray_frame_corrected, gray_frame_corrected, mask=mask)
         dst2 = cv.medianBlur(circular_cropped, 13) # dst2 is median blurred original image
+        # _, dst2 = cv.threshold(dst2,100,255,cv.THRESH_BINARY)
+        # cv.imshow('dst2',dst2)
         out_original.write(dst2)
-        coordinates = np.column_stack(np.where(dst2 > 50)) # Extracts destination pixel coordinate whose illuminance > 50
-        intensities = dst2[dst2 > 50] # give the corresponding illum. val.
+        coordinates = np.column_stack(np.where(dst2 > 75)) # Extracts destination pixel coordinate whose illuminance > 50
+        intensities = dst2[dst2 > 100] # give the corresponding illum. val.
 
         # Density-based spatial clustering of application with noisess
         if len(coordinates) > 0:

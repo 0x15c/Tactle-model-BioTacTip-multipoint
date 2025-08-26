@@ -6,6 +6,9 @@ from scipy.ndimage import gaussian_filter
 import time
 import matplotlib.pyplot as plt
 from sklearn.datasets import make_blobs
+from scipy import ndimage as ndi
+from skimage.feature import peak_local_max
+from skimage import data, img_as_float
 # Notice: image size is 350x350, which is the magic number in this script almost everywhere.
 
 output_video_file_path = 'output_from_online_cap.mp4'
@@ -97,7 +100,7 @@ def dbscan_extractor(dbscan_result, points):
 # this function takes extracted cluster info as input, calculates centroids with intensity
 def centroids_calc(cluster_array):
     result = np.zeros((0,2))
-    intsty = np.zeros((0))
+    intsty = np.zeros((0)).astype(np.uint16)
     for cluster in cluster_array:
         centroid = np.mean(cluster,axis=0)
         n_pts = cluster.shape[0]
@@ -138,6 +141,70 @@ def update_cluster_plot(cluster_array):
     plt.grid(True, alpha=0.3)
     plt.draw()
     plt.pause(0.001)
+
+def draw_centroid_cv(centroids, image, color=(0,0,255),flip=True):
+    """Draw centroids on the image as red solid circle markers"""
+    if flip == True: 
+        image = cv.flip(image, 0)  # Flip the image vertically
+    for centroid in centroids:
+        x, y = int(centroid[0]), int(centroid[1])
+        cv.circle(image, (x, y), 3, color, -1)  # Draw filled circle
+        # returns the image with drawn centroids
+    return image
+
+
+# this function takes 2 set of points as input, c_pts and l_pts correspondingly.
+# for each point in c_pts, it search for the closest point in l_pts, and draws a line between them.
+# this function returns the image with drawn lines.
+def draw_lines_between_centroids(c_pts, l_pts, image,flip=True):
+    if flip == True: 
+        image = cv.flip(image, 0)  # Flip the image vertically
+    for c_pt in c_pts:
+        # Find the closest point in l_pts
+        distances = np.linalg.norm(l_pts - c_pt, axis=1)
+        closest_idx = np.argmin(distances)
+        closest_pt = l_pts[closest_idx]
+        # Draw a line between the points
+        cv.line(image, (int(c_pt[0]), int(c_pt[1])), (int(closest_pt[0]), int(closest_pt[1])), (0, 255, 0), thickness=3)
+    return image
+
+# this function takes 2 sets of centroid points, namely the current pts and last pts.
+# it enumerates over last pts, for each pt in this set, it looks for c_pts and find the nearest one to make a pair.
+# this function returns a tuple which zips centroid from last frame and correspoding displacement vector together.
+
+
+
+
+# a class for gradient descent method, useful for finding the local maxima
+class grad_descent():
+    def __init__(self, arrZ, seeds): # `seeds` is a collection of coordinates, work as the initial state of gradient descent
+        self.arrZ = arrZ
+        self.iter_pts = seeds
+        beta = 0.75
+        scale = 10
+        iter = 50
+        try:
+            for i in range(0,iter):
+                grad = (self.grad(self.iter_pts.astype(np.int16),step=10)*(1-beta) + self.grad(self.iter_pts.astype(np.int16),step=3)*beta)*scale
+                self.iter_pts = self.iter_pts + grad*np.exp(-0.05*i+0.5)
+            self.iter_pts = self.iter_pts.astype(np.int16)
+        except Exception as e:
+            print(f"Exception in class grad_descent: {e}")
+    
+    def grad(self, pts, step):
+        try:
+            pts_limit_mask = (pts[:,0]<=cropped_size[1]-step) & (pts[:,1]<=cropped_size[0]-step) & (pts[:,0]>=0) & (pts[:,1]>=0)
+            pts = pts[pts_limit_mask]
+            self.iter_pts = self.iter_pts[pts_limit_mask]
+            gradY = 1/(2*step)*(self.arrZ[pts[:,1]+step,pts[:,0]]-self.arrZ[pts[:,1]-step,pts[:,0]])
+            gradX = 1/(2*step)*(self.arrZ[pts[:,1],pts[:,0]+step]-self.arrZ[pts[:,1],pts[:,0]-step])
+            return np.stack([gradX, gradY],axis=1)
+        except Exception as e:
+            print(f"Exception in class grad_descent, function grad: {e}")
+        
+
+
+
 
 # mesh grid is used for interpolation
 xspace = np.linspace(0, 350, 350)
@@ -180,20 +247,21 @@ while True:
     cropped_frame = cv.bitwise_and(frame_cropped, frame_cropped, mask=c_mask)
     grey_frame = cv.cvtColor(cropped_frame,cv.COLOR_BGR2GRAY)
     grey_frame_corrected = cv.subtract(grey_frame,o_ring_mask)
-    cv.imshow('grey_frame',grey_frame_corrected)
+    # cv.imshow('grey_frame_corrected',grey_frame_corrected)
+    # grey_frame_corrected = cv.threshold()
     if cv.waitKey(1) & 0xFF == ord('q'):
         break
     # write capture
     # bgr_image = cv.cvtColor(grey_frame, cv.COLOR_GRAY2BGR)
     out_original.write(grey_frame_corrected)
-    _,frame_binary = cv.threshold(grey_frame_corrected,100,255,cv.THRESH_BINARY)
+    _,frame_binary = cv.threshold(grey_frame_corrected,100,255,cv.THRESH_BINARY) # ordinary threshold
     # cv.imshow('frame_binary',frame_binary)
     frame_blurred = cv.GaussianBlur(frame_binary,GaussianKrnlSize,0)
 
     # perform dbscan algorithm
     cluster_coordinates = cv.findNonZero(frame_binary).reshape(-1,2)
-    cluster_coordinates[:,1]=350-cluster_coordinates[:,1] # mirroring
-    cluster_data = DBSCAN(eps=2, min_samples=5).fit(cluster_coordinates)
+    # cluster_coordinates[:,1]=350-cluster_coordinates[:,1] # mirroring
+    cluster_data = DBSCAN(eps=3, min_samples=8).fit(cluster_coordinates)
     clusters = dbscan_extractor(cluster_data, cluster_coordinates)
     centroids, intensity = centroids_calc(clusters)
     # show cluster result
@@ -207,14 +275,64 @@ while True:
 
     # intensity interpolation
     z_val = griddata(centroids, intensity, (xgrid, ygrid), method='linear',fill_value=0.0)
-    reg_z = interpolate_reg(z_val,'cv-image')
-    heatmap = cv.applyColorMap(gaussian_filter(reg_z,sigma=20), cv.COLORMAP_JET)
-    heatmap = cv.flip(heatmap,0)
+    reg_z = gaussian_filter(interpolate_reg(z_val,'cv-image'),sigma=20)
+    heatmap = cv.applyColorMap(reg_z, cv.COLORMAP_JET)
+    # heatmap = cv.flip(heatmap,0)
+    
     timenow = time.time()-time_0
     cv.putText(heatmap, f"FPS={int(fps)}",(10,30),cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv.LINE_AA)
     cv.putText(heatmap, f"T={float(timenow):.2f}",(10,60),cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv.LINE_AA)
+
+
+    # draw centroids with largest intensity
+    pack = np.column_stack((centroids, intensity))
+    # # heatmap=cv.flip(heatmap,0)
+    # for x in pack[pack[:,2]>35]:
+    #     cv.circle(heatmap,x[0:2].astype(np.int16),3,(255,0,0),-1)
+    # # heatmap=cv.flip(heatmap,0)
+    gd = grad_descent(z_val,(pack[pack[:,2]>30])[:,0:2]) # adjust sensitivity here
+
+    
+    # if gd.iter_pts.size > 0:
+    #     for pt in gd.iter_pts:
+    #         cv.circle(maxima_circular_mask,pt,20,255,-1)
+    #     pass
+    # cv.imshow('maxima_circular_mask',maxima_circular_mask)
+
+    # for x in gd.iter_pts:
+    #     cv.circle(heatmap,x[0:2].astype(np.int16),3,(0,255,255),-1)
+    if gd.iter_pts.size is not 0:
+        maxima_cls = DBSCAN(eps=20, min_samples=5).fit(gd.iter_pts)
+        maxima_clusters = dbscan_extractor(maxima_cls, gd.iter_pts)
+        maxima, _ = centroids_calc(maxima_clusters)
+        maxima = maxima.astype(np.int16)
+        maxima_circular_mask = np.zeros_like(z_val).astype(np.uint8)
+        for x in maxima:
+            cv.circle(maxima_circular_mask,x,20,255,-1)
+            maxarr = cv.bitwise_and(reg_z.astype(np.uint8),maxima_circular_mask)
+            pt = np.unravel_index(np.argmax(maxarr),maxarr.shape)
+            cv.drawMarker(heatmap, [pt[1],pt[0]],(0,255,0),cv.MARKER_CROSS,15,1)
+            cv.putText(heatmap, f"{z_val[pt]:.2f}",[pt[1]+5,pt[0]+15],cv.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1, cv.LINE_AA)
+            maxima_circular_mask = np.zeros_like(z_val).astype(np.uint8)
+
+    # heatmap=cv.flip(heatmap,0)
     cv.imshow('heatmap',heatmap)
-    heatmap_output.write(heatmap)
+
+    # test of gradient descent
+    # seed = np.array([100,100])
+
+
+
+    # draw centroids
+    # color_cvt_frame = cv.cvtColor(grey_frame_corrected, cv.COLOR_GRAY2BGR)
+    # cluster_image = draw_centroid_cv(centroids, color_cvt_frame)
+    # cv.putText(cluster_image, f"Cluster Count={centroids.shape[0]}",(10,30),cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv.LINE_AA)
+    # cv.imshow('grey frame with centroids',cluster_image)
+    # heatmap_output.write(heatmap)
+
+    # draw current and last frame centroids
+
+
     # (try: frame diff)
     # if frame_count > 0:
     #     # Extended range because uint8 range is 0~255, by subtracting it will overflow
@@ -227,6 +345,23 @@ while True:
     #     cv.imshow('frame_diff',frame_diff)
     #     frame_prev = grey_frame_corrected
     # cv.imshow('frame_blurred',frame_blurred)
+
+    # this routine draws the centroids of previous frame, onto the current frame.
+    if frame_count > 0:
+        
+        color_cvt_frame = cv.cvtColor(grey_frame_corrected, cv.COLOR_GRAY2BGR)
+        cluster_image = draw_centroid_cv(centroids, color_cvt_frame, color=(0,0,255),flip=False)
+        cluster_image = draw_centroid_cv(last_centroids, cluster_image, color=(255,0,0),flip=False)
+        cv.putText(cluster_image, f"Cluster Count={centroids.shape[0]}",(10,30),cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv.LINE_AA)
+        cv.imshow('grey frame with centroids',cluster_image)
+        heatmap_output.write(heatmap)
+        last_centroids = centroids
+
+    else:
+        last_centroids = centroids
+    # cv.imshow('frame_blurred',frame_blurred)
+
+
     time_end = time.time()
     frame_gen_time = time_end - time_start
     fps = 1/frame_gen_time
