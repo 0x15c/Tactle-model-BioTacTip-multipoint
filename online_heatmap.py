@@ -9,6 +9,7 @@ from sklearn.datasets import make_blobs
 from scipy import ndimage as ndi
 from skimage.feature import peak_local_max
 from skimage import data, img_as_float
+from pycpd import DeformableRegistration
 # Notice: image size is 350x350, which is the magic number in this script almost everywhere.
 
 output_video_file_path = 'output_from_online_cap.mp4'
@@ -55,7 +56,7 @@ def create_radial_mask(size, center=None, max_value=60, power=2):
 o_ring_mask = create_radial_mask((350, 350), max_value=245)
 
 # output video file settings
-out_original = cv.VideoWriter('output_from_online_cap.mp4', fourcc, fps, cropped_size, False)
+out_original = cv.VideoWriter('output_original.mp4', fourcc, fps, cropped_size, False)
 heatmap_output = cv.VideoWriter('output_from_online_cap.mp4', fourcc, fps, cropped_size, True)
 
 frame_count = 0
@@ -69,7 +70,7 @@ c_mask = np.zeros((350, 350), dtype=np.uint8)
 cv.circle(c_mask, center, radius, (255), -1)
 
 
-
+    
 
 '''
     a function takes DBSCAN results, returns a tuple (n, k, 2) where:
@@ -236,7 +237,8 @@ time_start, time_end, fps = 0, 0, 0
 # matplotlib settings
 # plt.ion()
 # fig, ax = plt.subplots(figsize=(4, 4))
-time_0 = time.time() 
+time_0 = time.time()
+
 while True:
     ret, frame = cap.read()
     if not ret:
@@ -255,7 +257,7 @@ while True:
     # bgr_image = cv.cvtColor(grey_frame, cv.COLOR_GRAY2BGR)
     out_original.write(grey_frame_corrected)
     _,frame_binary = cv.threshold(grey_frame_corrected,100,255,cv.THRESH_BINARY) # ordinary threshold
-    # cv.imshow('frame_binary',frame_binary)
+    # cv.imshow('grey_frame_corrected',grey_frame_corrected)
     frame_blurred = cv.GaussianBlur(frame_binary,GaussianKrnlSize,0)
 
     # perform dbscan algorithm
@@ -264,6 +266,24 @@ while True:
     cluster_data = DBSCAN(eps=3, min_samples=8).fit(cluster_coordinates)
     clusters = dbscan_extractor(cluster_data, cluster_coordinates)
     centroids, intensity = centroids_calc(clusters)
+    img = np.zeros_like(frame_cropped)
+    if frame_count==3: 
+        centroids_init = centroids
+        # np.savetxt('init.txt', centroids_init, fmt="%.6f",comments='')
+    if frame_count >=3:
+        # tf_param = l2dist_regs.registration_gmmreg(centroids_init/100, centroids/100, 'nonrigid' ,  delta=0.9, n_gmm_components=10, alpha=1.0, beta=0.1, use_estimated_sigma=True) # , sigma=1.0, delta=0.9, n_gmm_components=10, alpha=1.0, beta=0.1, use_estimated_sigma=True
+        # centroids_transformed = tps_transform(centroids_init/100, tf_param.a, tf_param.v, tf_param.control_pts)
+        reg = DeformableRegistration(**{'X': centroids/100, 'Y': centroids_init/100})
+        tY, tfparam = reg.register()
+        # np.savetxt('centroids.txt', centroids, fmt="%.6f",comments='')
+        for p, q in zip((centroids_init).astype(int), (tY*100).astype(int)):
+            # draw line (blue)
+            cv.line(img, tuple(p), tuple(q), (255,0,0), 1, cv.LINE_AA)
+            # draw starting point (red dot)
+            cv.circle(img, tuple(p), 2, (0,0,255), -1)
+            # draw transformed point (green dot)
+            cv.circle(img, tuple(q), 2, (0,255,0), -1)
+            cv.imshow("TPS Displacement Field", img)
     # show cluster result
     # ax.clear()
     # plt.xlim(0,350)
@@ -334,17 +354,17 @@ while True:
 
 
     # (try: frame diff)
-    # if frame_count > 0:
-    #     # Extended range because uint8 range is 0~255, by subtracting it will overflow
-    #     frame_diff = np.abs(grey_frame_corrected.astype(np.int16) - frame_prev.astype(np.int16))*frame_diff_gain
-    #     # Apply threshold to remove noise
-    #     threshold_value = 30
-    #     _, frame_diff = cv.threshold(frame_diff, threshold_value, 255, cv.THRESH_BINARY)
-    #     frame_diff = frame_diff.astype(np.uint8)
-    #     # cv.GaussianBlur(frame_diff,GaussianKrnlSize,0,frame_diff)
-    #     cv.imshow('frame_diff',frame_diff)
-    #     frame_prev = grey_frame_corrected
-    # cv.imshow('frame_blurred',frame_blurred)
+    if frame_count > 0:
+        # Extended range because uint8 range is 0~255, by subtracting it will overflow
+        frame_diff = np.abs(grey_frame_corrected.astype(np.int16) - frame_prev.astype(np.int16))*frame_diff_gain
+        # Apply threshold to remove noise
+        threshold_value = 30
+        _, frame_diff = cv.threshold(frame_diff, threshold_value, 255, cv.THRESH_BINARY)
+        frame_diff = frame_diff.astype(np.uint8)
+        # cv.GaussianBlur(frame_diff,GaussianKrnlSize,0,frame_diff)
+        cv.imshow('frame_diff',frame_diff)
+        frame_prev = grey_frame_corrected
+    cv.imshow('frame_blurred',frame_blurred)
 
     # this routine draws the centroids of previous frame, onto the current frame.
     if frame_count > 0:
