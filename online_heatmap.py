@@ -237,6 +237,7 @@ time_start, time_end, fps = 0, 0, 0
 # matplotlib settings
 # plt.ion()
 # fig, ax = plt.subplots(figsize=(4, 4))
+CPD_scale_factor = 0.01
 time_0 = time.time()
 
 while True:
@@ -247,6 +248,7 @@ while True:
     time_start = time.time()
     frame_cropped = frame[cropped_limits[0][1]:cropped_limits[1][1],cropped_limits[0][0]:cropped_limits[1][0]]
     cropped_frame = cv.bitwise_and(frame_cropped, frame_cropped, mask=c_mask)
+    cv.imshow("orignial image",cropped_frame)
     grey_frame = cv.cvtColor(cropped_frame,cv.COLOR_BGR2GRAY)
     grey_frame_corrected = cv.subtract(grey_frame,o_ring_mask)
     # cv.imshow('grey_frame_corrected',grey_frame_corrected)
@@ -273,7 +275,7 @@ while True:
     if frame_count >=3:
         # tf_param = l2dist_regs.registration_gmmreg(centroids_init/100, centroids/100, 'nonrigid' ,  delta=0.9, n_gmm_components=10, alpha=1.0, beta=0.1, use_estimated_sigma=True) # , sigma=1.0, delta=0.9, n_gmm_components=10, alpha=1.0, beta=0.1, use_estimated_sigma=True
         # centroids_transformed = tps_transform(centroids_init/100, tf_param.a, tf_param.v, tf_param.control_pts)
-        reg = DeformableRegistration(**{'X': centroids/100, 'Y': centroids_init/100})
+        reg = DeformableRegistration(**{'X': centroids*CPD_scale_factor, 'Y': centroids_init*CPD_scale_factor})
         tY, tfparam = reg.register()
         # np.savetxt('centroids.txt', centroids, fmt="%.6f",comments='')
         for p, q in zip((centroids_init).astype(int), (tY*100).astype(int)):
@@ -283,7 +285,7 @@ while True:
             cv.circle(img, tuple(p), 2, (0,0,255), -1)
             # draw transformed point (green dot)
             cv.circle(img, tuple(q), 2, (0,255,0), -1)
-            cv.imshow("TPS Displacement Field", img)
+            cv.imshow("CPD Displacement Field", img)
     # show cluster result
     # ax.clear()
     # plt.xlim(0,350)
