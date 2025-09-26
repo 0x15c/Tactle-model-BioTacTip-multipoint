@@ -184,15 +184,22 @@ class grad_descent():
         beta = 0.75
         scale = 10
         iter = 50
+        w1 = 0.2
+        w2 = 0.3
+        w3 = 0.5
         try:
             for i in range(0,iter):
-                grad = (self.grad(self.iter_pts.astype(np.int16),step=10)*(1-beta) + self.grad(self.iter_pts.astype(np.int16),step=3)*beta)*scale
+                grad = (self.grad(self.iter_pts.astype(np.int16),step=10)*w1 + 
+                        self.grad(self.iter_pts.astype(np.int16),step=5 )*w2 + 
+                        self.grad(self.iter_pts.astype(np.int16),step=3 )*w2)*scale
+                # notice this grad obtained is a mixture of larger step and smaller step, we are both taking look at local and global
                 self.iter_pts = self.iter_pts + grad*np.exp(-0.05*i+0.5)
             self.iter_pts = self.iter_pts.astype(np.int16)
         except Exception as e:
             print(f"Exception in class grad_descent: {e}")
     
     def grad(self, pts, step):
+        # step means the variation of point neighbor
         try:
             pts_limit_mask = (pts[:,0]<=cropped_size[1]-step) & (pts[:,1]<=cropped_size[0]-step) & (pts[:,0]>=0) & (pts[:,1]>=0)
             pts = pts[pts_limit_mask]
@@ -213,7 +220,7 @@ yspace = np.linspace(0, 350, 350)
 xgrid, ygrid = np.meshgrid(xspace, yspace)
 
 # function for regulation of the interpolation result
-def interpolate_reg(data, mode='zero-to-one',adaptive=False):
+def interpolate_reg(data, mode='zero-to-one',adaptive=False,scaleFactor=5.0):
     if adaptive == True:
         min, max = np.min(data), np.max(data)
         data = data - min
@@ -226,7 +233,7 @@ def interpolate_reg(data, mode='zero-to-one',adaptive=False):
     else:
         match mode:
             case 'cv-image':
-                data = data * 5.0 # scale factor
+                data = data * scaleFactor # scale factor
                 data[data < 0] = 0
                 data[data > 255] = 255
                 return data.astype(np.uint8)
@@ -278,7 +285,9 @@ while True:
         reg = DeformableRegistration(**{'X': centroids*CPD_scale_factor, 'Y': centroids_init*CPD_scale_factor})
         tY, tfparam = reg.register()
         # np.savetxt('centroids.txt', centroids, fmt="%.6f",comments='')
-        for p, q in zip((centroids_init).astype(int), (tY*100).astype(int)):
+        centroids_afterTransform = tY/CPD_scale_factor
+        displacement = centroids_afterTransform - centroids_init
+        for p, q in zip((centroids_init).astype(int), (centroids_afterTransform).astype(int)):
             # draw line (blue)
             cv.line(img, tuple(p), tuple(q), (255,0,0), 1, cv.LINE_AA)
             # draw starting point (red dot)
@@ -286,6 +295,19 @@ while True:
             # draw transformed point (green dot)
             cv.circle(img, tuple(q), 2, (0,255,0), -1)
             cv.imshow("CPD Displacement Field", img)
+        # obtain the displacement field
+        # r_val is namely the displacement strength of markers
+        norm_displacement = np.linalg.norm(displacement,axis=1)
+
+        r_val = griddata(centroids_init, norm_displacement, (xgrid, ygrid), method='linear',fill_value=0.0)
+        reg_r = gaussian_filter(interpolate_reg(r_val,'cv-image',scaleFactor=20.0),sigma=20)
+        r_displacement_map = cv.applyColorMap(reg_r, cv.COLORMAP_JET)
+        cv.imshow("X-Displacement", r_displacement_map)
+
+        # x_val = griddata(centroids_init, displacement[:,0], (xgrid, ygrid), method='linear',fill_value=0.0)
+        # reg_x = gaussian_filter(interpolate_reg(np.abs(x_val),'cv-image'),sigma=20)
+        # x_displacement_map = cv.applyColorMap(reg_x, cv.COLORMAP_JET)
+        # cv.imshow("X-Displacement", x_displacement_map)
     # show cluster result
     # ax.clear()
     # plt.xlim(0,350)
@@ -296,8 +318,9 @@ while True:
     # sparsity extraction
 
     # intensity interpolation
-    z_val = griddata(centroids, intensity, (xgrid, ygrid), method='linear',fill_value=0.0)
+    z_val = griddata(centroids, intensity, (xgrid, ygrid), method='linear',fill_value=0.0) # intensity, i.e. the z directional force
     reg_z = gaussian_filter(interpolate_reg(z_val,'cv-image'),sigma=20)
+  
     heatmap = cv.applyColorMap(reg_z, cv.COLORMAP_JET)
     # heatmap = cv.flip(heatmap,0)
     
@@ -312,7 +335,7 @@ while True:
     # for x in pack[pack[:,2]>35]:
     #     cv.circle(heatmap,x[0:2].astype(np.int16),3,(255,0,0),-1)
     # # heatmap=cv.flip(heatmap,0)
-    gd = grad_descent(z_val,(pack[pack[:,2]>30])[:,0:2]) # adjust sensitivity here
+    gd = grad_descent(z_val,(pack[pack[:,2]>30])[:,0:2]) # adjust threshold for finding maxima here
 
     
     # if gd.iter_pts.size > 0:
@@ -323,8 +346,8 @@ while True:
 
     # for x in gd.iter_pts:
     #     cv.circle(heatmap,x[0:2].astype(np.int16),3,(0,255,255),-1)
-    if gd.iter_pts.size is not 0:
-        maxima_cls = DBSCAN(eps=20, min_samples=5).fit(gd.iter_pts)
+    if gd.iter_pts.size != 0:
+        maxima_cls = DBSCAN(eps=30, min_samples=8).fit(gd.iter_pts)
         maxima_clusters = dbscan_extractor(maxima_cls, gd.iter_pts)
         maxima, _ = centroids_calc(maxima_clusters)
         maxima = maxima.astype(np.int16)
