@@ -10,6 +10,7 @@ from scipy import ndimage as ndi
 from skimage.feature import peak_local_max
 from skimage import data, img_as_float
 from pycpd import DeformableRegistration
+from scipy.interpolate import NearestNDInterpolator
 # Notice: image size is 350x350, which is the magic number in this script almost everywhere.
 
 output_video_file_path = 'output_from_online_cap.mp4'
@@ -110,39 +111,6 @@ def centroids_calc(cluster_array):
         intsty = np.append(intsty,[intensity],axis=0)
     return result, intsty
 
-def update_cluster_plot(cluster_array):
-    """Update plot for real-time visualization"""
-
-    plt.clf()  # Clear current figure
-    plt.xlim(0,350)
-    plt.ylim(0,350)
-    plt.figure(figsize=(4, 4))
-    if cluster_array.size == 0:
-        plt.text(0.5, 0.5, 'No clusters found', 
-                transform=plt.gca().transAxes, ha='center', va='center')
-        plt.draw()
-        plt.pause(0.001)
-        return
-    
-    n_clusters = cluster_array.shape[0]
-    colors = plt.cm.Set1(np.linspace(0, 1, n_clusters))
-    
-    for i in range(n_clusters):
-        cluster_points = cluster_array[i]
-        valid_mask = ~np.isnan(cluster_points).any(axis=1)
-        valid_points = cluster_points[valid_mask]
-        
-        if len(valid_points) > 0:
-            plt.scatter(valid_points[:, 0], valid_points[:, 1], 
-                       c=[colors[i]], s=30, alpha=0.7)
-    
-    plt.title(f'Real-time Clusters ({n_clusters} found)')
-    plt.xlabel('X')
-    plt.ylabel('Y')
-    plt.grid(True, alpha=0.3)
-    plt.draw()
-    plt.pause(0.001)
-
 def draw_centroid_cv(centroids, image, color=(0,0,255),flip=True):
     """Draw centroids on the image as red solid circle markers"""
     if flip == True: 
@@ -154,24 +122,24 @@ def draw_centroid_cv(centroids, image, color=(0,0,255),flip=True):
     return image
 
 
-# this function takes 2 set of points as input, c_pts and l_pts correspondingly.
-# for each point in c_pts, it search for the closest point in l_pts, and draws a line between them.
-# this function returns the image with drawn lines.
-def draw_lines_between_centroids(c_pts, l_pts, image,flip=True):
-    if flip == True: 
-        image = cv.flip(image, 0)  # Flip the image vertically
-    for c_pt in c_pts:
-        # Find the closest point in l_pts
-        distances = np.linalg.norm(l_pts - c_pt, axis=1)
-        closest_idx = np.argmin(distances)
-        closest_pt = l_pts[closest_idx]
-        # Draw a line between the points
-        cv.line(image, (int(c_pt[0]), int(c_pt[1])), (int(closest_pt[0]), int(closest_pt[1])), (0, 255, 0), thickness=3)
-    return image
+# # this function takes 2 set of points as input, c_pts and l_pts correspondingly.
+# # for each point in c_pts, it search for the closest point in l_pts, and draws a line between them.
+# # this function returns the image with drawn lines.
+# def draw_lines_between_centroids(c_pts, l_pts, image,flip=True):
+#     if flip == True: 
+#         image = cv.flip(image, 0)  # Flip the image vertically
+#     for c_pt in c_pts:
+#         # Find the closest point in l_pts
+#         distances = np.linalg.norm(l_pts - c_pt, axis=1)
+#         closest_idx = np.argmin(distances)
+#         closest_pt = l_pts[closest_idx]
+#         # Draw a line between the points
+#         cv.line(image, (int(c_pt[0]), int(c_pt[1])), (int(closest_pt[0]), int(closest_pt[1])), (0, 255, 0), thickness=3)
+#     return image
 
-# this function takes 2 sets of centroid points, namely the current pts and last pts.
-# it enumerates over last pts, for each pt in this set, it looks for c_pts and find the nearest one to make a pair.
-# this function returns a tuple which zips centroid from last frame and correspoding displacement vector together.
+# # this function takes 2 sets of centroid points, namely the current pts and last pts.
+# # it enumerates over last pts, for each pt in this set, it looks for c_pts and find the nearest one to make a pair.
+# # this function returns a tuple which zips centroid from last frame and correspoding displacement vector together.
 
 
 
@@ -191,7 +159,7 @@ class grad_descent():
             for i in range(0,iter):
                 grad = (self.grad(self.iter_pts.astype(np.int16),step=10)*w1 + 
                         self.grad(self.iter_pts.astype(np.int16),step=5 )*w2 + 
-                        self.grad(self.iter_pts.astype(np.int16),step=3 )*w2)*scale
+                        self.grad(self.iter_pts.astype(np.int16),step=3 )*w3)*scale
                 # notice this grad obtained is a mixture of larger step and smaller step, we are both taking look at local and global
                 self.iter_pts = self.iter_pts + grad*np.exp(-0.05*i+0.5)
             self.iter_pts = self.iter_pts.astype(np.int16)
@@ -241,10 +209,16 @@ def interpolate_reg(data, mode='zero-to-one',adaptive=False,scaleFactor=5.0):
                 return data # not finished yet
 # fps init
 time_start, time_end, fps = 0, 0, 0
-# matplotlib settings
-# plt.ion()
-# fig, ax = plt.subplots(figsize=(4, 4))
-CPD_scale_factor = 0.01
+
+CPD_scale_factor = 1/100 # this value was tried out empirically
+
+# initialize a plt window
+plt.ion()
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+ax.set_xlim(0-50, 350+50)
+ax.set_ylim(0-50, 350+50)
+ax.set_zlim(-200, 200)
 time_0 = time.time()
 
 while True:
@@ -276,33 +250,58 @@ while True:
     clusters = dbscan_extractor(cluster_data, cluster_coordinates)
     centroids, intensity = centroids_calc(clusters)
     img = np.zeros_like(frame_cropped)
-    if frame_count==3: 
+    # wait until frame stabilizes
+    if frame_count==5: 
         centroids_init = centroids
         # np.savetxt('init.txt', centroids_init, fmt="%.6f",comments='')
-    if frame_count >=3:
+        markerPtsZ = np.ones(centroids_init.shape[0]) * 20
+        markerPtsQinit = np.zeros(centroids_init.shape[0])
+        # quiver_plot = ax.quiver(centroids_init[:,0], centroids_init[:,1], markerPtsZ, markerPtsQinit, markerPtsQinit, markerPtsZ, length=0.1, normalize=True)
+    if frame_count >=5:
         # tf_param = l2dist_regs.registration_gmmreg(centroids_init/100, centroids/100, 'nonrigid' ,  delta=0.9, n_gmm_components=10, alpha=1.0, beta=0.1, use_estimated_sigma=True) # , sigma=1.0, delta=0.9, n_gmm_components=10, alpha=1.0, beta=0.1, use_estimated_sigma=True
         # centroids_transformed = tps_transform(centroids_init/100, tf_param.a, tf_param.v, tf_param.control_pts)
-        reg = DeformableRegistration(**{'X': centroids*CPD_scale_factor, 'Y': centroids_init*CPD_scale_factor})
+        reg = DeformableRegistration(**{'X': centroids*CPD_scale_factor, 'Y': centroids_init*CPD_scale_factor, 'low_rank': True},alpha=25,beta=2)
         tY, tfparam = reg.register()
         # np.savetxt('centroids.txt', centroids, fmt="%.6f",comments='')
         centroids_afterTransform = tY/CPD_scale_factor
-        displacement = centroids_afterTransform - centroids_init
+        displacement2D = centroids_afterTransform - centroids_init
         for p, q in zip((centroids_init).astype(int), (centroids_afterTransform).astype(int)):
-            # draw line (blue)
-            cv.line(img, tuple(p), tuple(q), (255,0,0), 1, cv.LINE_AA)
+            # draw line (yellow)
+            cv.line(img, tuple(p), tuple(q), (0,255,255), 1, cv.LINE_AA)
             # draw starting point (red dot)
-            cv.circle(img, tuple(p), 2, (0,0,255), -1)
+            cv.circle(img, tuple(p), 1, (0,255,0), -1)
             # draw transformed point (green dot)
-            cv.circle(img, tuple(q), 2, (0,255,0), -1)
+            # cv.circle(img, tuple(q), 1, (0,255,0), -1)
             cv.imshow("CPD Displacement Field", img)
+        # obtain the 3D vector per centroid
+        # first extend the centroid points to 3D
+        # this can be modified to match the surface shape of the sensor
+        markerPtsZ = np.ones(centroids_init.shape[0]) * 20
+        markerPts3D = np.column_stack((centroids_init, markerPtsZ))
+        # from intensity of moving marker points, we interpolate out the intensity of their initial position
+        # @TODO this need to be fixed later
+        interp = NearestNDInterpolator(centroids,intensity) # we are using nearest interpolation here because other types of 2D interpolater cannot generate reasonable value outside the bound
+        marker_Z_intensity = interp(centroids_init)
+        # marker_Z_intensity = griddata(centroids,intensity,centroids_init)
+        markerDisp3D = np.column_stack((displacement2D,marker_Z_intensity)) # (x,y,z) vector of displacement, z displacement is actually intensity
+        # @TODO early version of 3D the vector plot
+        markerDisp3D = markerDisp3D * 25
+
+        
+        quiver_plot = ax.quiver(markerPts3D[:,0], markerPts3D[:,1], markerPts3D[:,2], markerDisp3D[:,0], markerDisp3D[:,1], markerDisp3D[:,2], length=0.1, normalize=False)
+        
+        plt.draw()
+        plt.pause(0.1)
+        quiver_plot.remove()
+
         # obtain the displacement field
         # r_val is namely the displacement strength of markers
-        norm_displacement = np.linalg.norm(displacement,axis=1)
+        # norm_displacement = np.linalg.norm(displacement,axis=1)
 
-        r_val = griddata(centroids_init, norm_displacement, (xgrid, ygrid), method='linear',fill_value=0.0)
-        reg_r = gaussian_filter(interpolate_reg(r_val,'cv-image',scaleFactor=20.0),sigma=20)
-        r_displacement_map = cv.applyColorMap(reg_r, cv.COLORMAP_JET)
-        cv.imshow("X-Displacement", r_displacement_map)
+        # r_val = griddata(centroids_init, norm_displacement, (xgrid, ygrid), method='linear',fill_value=0.0)
+        # reg_r = gaussian_filter(interpolate_reg(r_val,'cv-image',scaleFactor=20.0),sigma=20)
+        # r_displacement_map = cv.applyColorMap(reg_r, cv.COLORMAP_JET)
+        # cv.imshow("X-Displacement", r_displacement_map)
 
         # x_val = griddata(centroids_init, displacement[:,0], (xgrid, ygrid), method='linear',fill_value=0.0)
         # reg_x = gaussian_filter(interpolate_reg(np.abs(x_val),'cv-image'),sigma=20)
