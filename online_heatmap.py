@@ -5,6 +5,7 @@ from sklearn.cluster import DBSCAN
 from scipy.ndimage import gaussian_filter
 import time
 import matplotlib.pyplot as plt
+from matplotlib import cm, colors
 from sklearn.datasets import make_blobs
 from scipy import ndimage as ndi
 from skimage.feature import peak_local_max
@@ -276,7 +277,7 @@ while True:
         # obtain the 3D vector per centroid
         # first extend the centroid points to 3D
         # this can be modified to match the surface shape of the sensor
-        markerPtsZ = np.ones(centroids_init.shape[0]) * 20
+        markerPtsZ = np.zeros(centroids_init.shape[0])
         markerPts3D = np.column_stack((centroids_init, markerPtsZ))
         # from intensity of moving marker points, we interpolate out the intensity of their initial position
         # @TODO this need to be fixed later
@@ -287,8 +288,10 @@ while True:
         # @TODO early version of 3D the vector plot
         markerDisp3D = markerDisp3D * 25
 
-        
-        quiver_plot = ax.quiver(markerPts3D[:,0], markerPts3D[:,1], markerPts3D[:,2], markerDisp3D[:,0], markerDisp3D[:,1], markerDisp3D[:,2], length=0.1, normalize=False)
+        disp_vec_mag = np.linalg.norm(markerDisp3D,axis=1)
+        # disp_vec_normalized = plt.Normalize(vmin=disp_vec_mag.min(),vmax=disp_vec_mag.max())
+        colors = plt.cm.viridis(disp_vec_mag/2000)
+        quiver_plot = ax.quiver(markerPts3D[:,0], markerPts3D[:,1], markerPts3D[:,2], markerDisp3D[:,0], markerDisp3D[:,1], markerDisp3D[:,2], length=0.08, normalize=False,colors=colors)
         
         plt.draw()
         plt.pause(0.1)
