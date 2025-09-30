@@ -1,5 +1,6 @@
 import numpy as np
 import cv2 as cv
+import open3d as o3d
 from scipy.interpolate import griddata
 from sklearn.cluster import DBSCAN
 from scipy.ndimage import gaussian_filter
@@ -12,6 +13,8 @@ from skimage.feature import peak_local_max
 from skimage import data, img_as_float
 from pycpd import DeformableRegistration
 from scipy.interpolate import NearestNDInterpolator
+from vector_plotter import VectorFieldVisualizer as vfv
+
 # Notice: image size is 350x350, which is the magic number in this script almost everywhere.
 
 output_video_file_path = 'output_from_online_cap.mp4'
@@ -64,7 +67,7 @@ heatmap_output = cv.VideoWriter('output_from_online_cap.mp4', fourcc, fps, cropp
 frame_count = 0
 frame_diff_gain = 1
 frame_prev = np.zeros(cropped_size,np.uint8)
-frame_blurred = np.zeros(cropped_size,np.uint8)
+# frame_blurred = np.zeros(cropped_size,np.uint8)
 GaussianKrnlSize = (3,3)
 
 # circular mask
@@ -118,32 +121,9 @@ def draw_centroid_cv(centroids, image, color=(0,0,255),flip=True):
         image = cv.flip(image, 0)  # Flip the image vertically
     for centroid in centroids:
         x, y = int(centroid[0]), int(centroid[1])
-        cv.circle(image, (x, y), 3, color, -1)  # Draw filled circle
+        cv.circle(image, (x, y), 2, color, -1)  # Draw filled circle
         # returns the image with drawn centroids
     return image
-
-
-# # this function takes 2 set of points as input, c_pts and l_pts correspondingly.
-# # for each point in c_pts, it search for the closest point in l_pts, and draws a line between them.
-# # this function returns the image with drawn lines.
-# def draw_lines_between_centroids(c_pts, l_pts, image,flip=True):
-#     if flip == True: 
-#         image = cv.flip(image, 0)  # Flip the image vertically
-#     for c_pt in c_pts:
-#         # Find the closest point in l_pts
-#         distances = np.linalg.norm(l_pts - c_pt, axis=1)
-#         closest_idx = np.argmin(distances)
-#         closest_pt = l_pts[closest_idx]
-#         # Draw a line between the points
-#         cv.line(image, (int(c_pt[0]), int(c_pt[1])), (int(closest_pt[0]), int(closest_pt[1])), (0, 255, 0), thickness=3)
-#     return image
-
-# # this function takes 2 sets of centroid points, namely the current pts and last pts.
-# # it enumerates over last pts, for each pt in this set, it looks for c_pts and find the nearest one to make a pair.
-# # this function returns a tuple which zips centroid from last frame and correspoding displacement vector together.
-
-
-
 
 # a class for gradient descent method, useful for finding the local maxima
 class grad_descent():
@@ -179,14 +159,28 @@ class grad_descent():
         except Exception as e:
             print(f"Exception in class grad_descent, function grad: {e}")
         
+# function to create colored line set
+def create_lines(origins, vectors, cmap=cm.viridis):
+    points = np.vstack([origins, origins + vectors])
+    
+    # lines connect i -> i+n
+    lines = [[i, i + len(origins)] for i in range(len(origins))]
+    
+    # color by vector length
+    lengths = np.linalg.norm(vectors, axis=1)
+    norm = (lengths - lengths.min()) / (np.ptp(lengths) + 1e-9)
+    colors = cmap(norm)[:, :3]  # take RGB from colormap
+    
+    # one color per line
+    line_colors = [colors[i] for i in range(len(origins))]
+    
+    line_set = o3d.geometry.LineSet(
+        points=o3d.utility.Vector3dVector(points),
+        lines=o3d.utility.Vector2iVector(lines),
+    )
+    line_set.colors = o3d.utility.Vector3dVector(line_colors)
+    return line_set
 
-
-
-
-# mesh grid is used for interpolation
-xspace = np.linspace(0, 350, 350)
-yspace = np.linspace(0, 350, 350)
-xgrid, ygrid = np.meshgrid(xspace, yspace)
 
 # function for regulation of the interpolation result
 def interpolate_reg(data, mode='zero-to-one',adaptive=False,scaleFactor=5.0):
@@ -214,12 +208,22 @@ time_start, time_end, fps = 0, 0, 0
 CPD_scale_factor = 1/100 # this value was tried out empirically
 
 # initialize a plt window
-plt.ion()
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.set_xlim(0-50, 350+50)
-ax.set_ylim(0-50, 350+50)
-ax.set_zlim(-200, 200)
+# plt.ion()
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+# ax.set_xlim(0-50, 350+50)
+# ax.set_ylim(0-50, 350+50)
+# ax.set_zlim(-200, 200)
+
+# mesh grid is used for interpolation
+xspace = np.linspace(0, 350, 350)
+yspace = np.linspace(0, 350, 350)
+xgrid, ygrid = np.meshgrid(xspace, yspace)
+
+# # open3d display initialization
+# vis = o3d.visualization.Visualizer()
+# vis.create_window()
+
 time_0 = time.time()
 
 while True:
@@ -233,7 +237,7 @@ while True:
     cv.imshow("orignial image",cropped_frame)
     grey_frame = cv.cvtColor(cropped_frame,cv.COLOR_BGR2GRAY)
     grey_frame_corrected = cv.subtract(grey_frame,o_ring_mask)
-    # cv.imshow('grey_frame_corrected',grey_frame_corrected)
+    cv.imshow('grey_frame_corrected',grey_frame_corrected)
     # grey_frame_corrected = cv.threshold()
     if cv.waitKey(1) & 0xFF == ord('q'):
         break
@@ -241,8 +245,8 @@ while True:
     # bgr_image = cv.cvtColor(grey_frame, cv.COLOR_GRAY2BGR)
     out_original.write(grey_frame_corrected)
     _,frame_binary = cv.threshold(grey_frame_corrected,100,255,cv.THRESH_BINARY) # ordinary threshold
-    # cv.imshow('grey_frame_corrected',grey_frame_corrected)
-    frame_blurred = cv.GaussianBlur(frame_binary,GaussianKrnlSize,0)
+    cv.imshow('binary_frame',frame_binary)
+    # frame_blurred = cv.GaussianBlur(frame_binary,GaussianKrnlSize,0)
 
     # perform dbscan algorithm
     cluster_coordinates = cv.findNonZero(frame_binary).reshape(-1,2)
@@ -258,6 +262,12 @@ while True:
         markerPtsZ = np.ones(centroids_init.shape[0]) * 20
         markerPtsQinit = np.zeros(centroids_init.shape[0])
         # quiver_plot = ax.quiver(centroids_init[:,0], centroids_init[:,1], markerPtsZ, markerPtsQinit, markerPtsQinit, markerPtsZ, length=0.1, normalize=True)
+        # this can be modified to match the surface shape of the sensor
+        markerPts3D = np.column_stack((centroids_init, markerPtsZ))
+        # some initialization on open3d
+        # line_set = create_lines(markerPts3D, np.zeros_like(markerPts3D))
+        # vis.add_geometry(line_set)
+        viz = vfv(markerPts3D)
     if frame_count >=5:
         # tf_param = l2dist_regs.registration_gmmreg(centroids_init/100, centroids/100, 'nonrigid' ,  delta=0.9, n_gmm_components=10, alpha=1.0, beta=0.1, use_estimated_sigma=True) # , sigma=1.0, delta=0.9, n_gmm_components=10, alpha=1.0, beta=0.1, use_estimated_sigma=True
         # centroids_transformed = tps_transform(centroids_init/100, tf_param.a, tf_param.v, tf_param.control_pts)
@@ -276,9 +286,7 @@ while True:
             cv.imshow("CPD Displacement Field", img)
         # obtain the 3D vector per centroid
         # first extend the centroid points to 3D
-        # this can be modified to match the surface shape of the sensor
-        markerPtsZ = np.zeros(centroids_init.shape[0])
-        markerPts3D = np.column_stack((centroids_init, markerPtsZ))
+
         # from intensity of moving marker points, we interpolate out the intensity of their initial position
         # @TODO this need to be fixed later
         interp = NearestNDInterpolator(centroids,intensity) # we are using nearest interpolation here because other types of 2D interpolater cannot generate reasonable value outside the bound
@@ -286,20 +294,31 @@ while True:
         # marker_Z_intensity = griddata(centroids,intensity,centroids_init)
         markerDisp3D = np.column_stack((displacement2D,marker_Z_intensity)) # (x,y,z) vector of displacement, z displacement is actually intensity
         # @TODO early version of 3D the vector plot
-        markerDisp3D = markerDisp3D * 25
 
         disp_vec_mag = np.linalg.norm(markerDisp3D,axis=1)
-        # disp_vec_normalized = plt.Normalize(vmin=disp_vec_mag.min(),vmax=disp_vec_mag.max())
-        colors = plt.cm.viridis(disp_vec_mag/2000)
-        quiver_plot = ax.quiver(markerPts3D[:,0], markerPts3D[:,1], markerPts3D[:,2], markerDisp3D[:,0], markerDisp3D[:,1], markerDisp3D[:,2], length=0.08, normalize=False,colors=colors)
+        # matplotlib settings
+        # colors = plt.cm.viridis(disp_vec_mag/2000)
+        # quiver_plot = ax.quiver(markerPts3D[:,0], markerPts3D[:,1], markerPts3D[:,2], markerDisp3D[:,0], markerDisp3D[:,1], markerDisp3D[:,2], length=0.08, normalize=False,colors=colors)
         
-        plt.draw()
-        plt.pause(0.1)
-        quiver_plot.remove()
+        # plt.draw()
+        # plt.pause(0.1)
+        # quiver_plot.remove()
+
+        # # draw the 3d vector plot
+        # line_set_updated = create_lines(markerPts3D, markerDisp3D)
+        # line_set.points = line_set_updated.points
+        # line_set.lines = line_set_updated.lines
+        # line_set.colors = line_set_updated.colors
+        # vis.update_geometry(line_set)
+        # vis.poll_events()
+        # vis.update_renderer()
+        viz.update(markerDisp3D)
+
 
         # obtain the displacement field
         # r_val is namely the displacement strength of markers
         # norm_displacement = np.linalg.norm(displacement,axis=1)
+        
 
         # r_val = griddata(centroids_init, norm_displacement, (xgrid, ygrid), method='linear',fill_value=0.0)
         # reg_r = gaussian_filter(interpolate_reg(r_val,'cv-image',scaleFactor=20.0),sigma=20)
@@ -327,8 +346,8 @@ while True:
     # heatmap = cv.flip(heatmap,0)
     
     timenow = time.time()-time_0
-    cv.putText(heatmap, f"FPS={int(fps)}",(10,30),cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv.LINE_AA)
-    cv.putText(heatmap, f"T={float(timenow):.2f}",(10,60),cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv.LINE_AA)
+    cv.putText(heatmap, f"FPS={int(fps)}",(10,20),cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
+    cv.putText(heatmap, f"T={float(timenow):.2f}",(10,40),cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
 
 
     # draw centroids with largest intensity
@@ -381,25 +400,25 @@ while True:
 
 
     # (try: frame diff)
-    if frame_count > 0:
-        # Extended range because uint8 range is 0~255, by subtracting it will overflow
-        frame_diff = np.abs(grey_frame_corrected.astype(np.int16) - frame_prev.astype(np.int16))*frame_diff_gain
-        # Apply threshold to remove noise
-        threshold_value = 30
-        _, frame_diff = cv.threshold(frame_diff, threshold_value, 255, cv.THRESH_BINARY)
-        frame_diff = frame_diff.astype(np.uint8)
-        # cv.GaussianBlur(frame_diff,GaussianKrnlSize,0,frame_diff)
-        cv.imshow('frame_diff',frame_diff)
-        frame_prev = grey_frame_corrected
-    cv.imshow('frame_blurred',frame_blurred)
+    # if frame_count > 0:
+    #     # Extended range because uint8 range is 0~255, by subtracting it will overflow
+    #     frame_diff = np.abs(grey_frame_corrected.astype(np.int16) - frame_prev.astype(np.int16))*frame_diff_gain
+    #     # Apply threshold to remove noise
+    #     threshold_value = 30
+    #     _, frame_diff = cv.threshold(frame_diff, threshold_value, 255, cv.THRESH_BINARY)
+    #     frame_diff = frame_diff.astype(np.uint8)
+    #     # cv.GaussianBlur(frame_diff,GaussianKrnlSize,0,frame_diff)
+    #     cv.imshow('frame_diff',frame_diff)
+    #     frame_prev = grey_frame_corrected
+    # cv.imshow('frame_blurred',frame_blurred)
 
     # this routine draws the centroids of previous frame, onto the current frame.
     if frame_count > 0:
         
         color_cvt_frame = cv.cvtColor(grey_frame_corrected, cv.COLOR_GRAY2BGR)
         cluster_image = draw_centroid_cv(centroids, color_cvt_frame, color=(0,0,255),flip=False)
-        cluster_image = draw_centroid_cv(last_centroids, cluster_image, color=(255,0,0),flip=False)
-        cv.putText(cluster_image, f"Cluster Count={centroids.shape[0]}",(10,30),cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv.LINE_AA)
+        # cluster_image = draw_centroid_cv(last_centroids, cluster_image, color=(0,0,255),flip=False)
+        cv.putText(cluster_image, f"Cluster Count={centroids.shape[0]}",(10,20),cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
         cv.imshow('grey frame with centroids',cluster_image)
         heatmap_output.write(heatmap)
         last_centroids = centroids
