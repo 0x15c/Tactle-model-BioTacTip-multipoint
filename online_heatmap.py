@@ -13,7 +13,7 @@ from skimage.feature import peak_local_max
 from skimage import data, img_as_float
 from pycpd import DeformableRegistration
 from scipy.interpolate import NearestNDInterpolator
-from vector_plotter import VectorFieldVisualizer as vfv
+# from vector_plotter import VectorFieldVisualizer as vfv
 
 # Notice: image size is 350x350, which is the magic number in this script almost everywhere.
 
@@ -130,7 +130,8 @@ class grad_descent():
     def __init__(self, arrZ, seeds): # `seeds` is a collection of coordinates, work as the initial state of gradient descent
         self.arrZ = arrZ
         self.iter_pts = seeds
-        beta = 0.75
+        alpha = 0.05
+        beta = 0.5
         scale = 10
         iter = 50
         w1 = 0.2
@@ -142,7 +143,7 @@ class grad_descent():
                         self.grad(self.iter_pts.astype(np.int16),step=5 )*w2 + 
                         self.grad(self.iter_pts.astype(np.int16),step=3 )*w3)*scale
                 # notice this grad obtained is a mixture of larger step and smaller step, we are both taking look at local and global
-                self.iter_pts = self.iter_pts + grad*np.exp(-0.05*i+0.5)
+                self.iter_pts = self.iter_pts + grad*np.exp(-alpha*i+beta)
             self.iter_pts = self.iter_pts.astype(np.int16)
         except Exception as e:
             print(f"Exception in class grad_descent: {e}")
@@ -267,11 +268,11 @@ while True:
         # some initialization on open3d
         # line_set = create_lines(markerPts3D, np.zeros_like(markerPts3D))
         # vis.add_geometry(line_set)
-        viz = vfv(markerPts3D)
+        # viz = vfv(markerPts3D)
     if frame_count >=5:
         # tf_param = l2dist_regs.registration_gmmreg(centroids_init/100, centroids/100, 'nonrigid' ,  delta=0.9, n_gmm_components=10, alpha=1.0, beta=0.1, use_estimated_sigma=True) # , sigma=1.0, delta=0.9, n_gmm_components=10, alpha=1.0, beta=0.1, use_estimated_sigma=True
         # centroids_transformed = tps_transform(centroids_init/100, tf_param.a, tf_param.v, tf_param.control_pts)
-        reg = DeformableRegistration(**{'X': centroids*CPD_scale_factor, 'Y': centroids_init*CPD_scale_factor, 'low_rank': True},alpha=25,beta=2)
+        reg = DeformableRegistration(**{'X': centroids*CPD_scale_factor, 'Y': centroids_init*CPD_scale_factor, 'low_rank': True, 'w':0.8},alpha=2.5,beta=2)
         tY, tfparam = reg.register()
         # np.savetxt('centroids.txt', centroids, fmt="%.6f",comments='')
         centroids_afterTransform = tY/CPD_scale_factor
@@ -292,7 +293,7 @@ while True:
         interp = NearestNDInterpolator(centroids,intensity) # we are using nearest interpolation here because other types of 2D interpolater cannot generate reasonable value outside the bound
         marker_Z_intensity = interp(centroids_init)
         # marker_Z_intensity = griddata(centroids,intensity,centroids_init)
-        markerDisp3D = np.column_stack((displacement2D,marker_Z_intensity)) # (x,y,z) vector of displacement, z displacement is actually intensity
+        markerDisp3D = np.column_stack((displacement2D,-marker_Z_intensity)) # (x,y,z) vector of displacement, z displacement is actually intensity
         # @TODO early version of 3D the vector plot
 
         disp_vec_mag = np.linalg.norm(markerDisp3D,axis=1)
@@ -312,7 +313,7 @@ while True:
         # vis.update_geometry(line_set)
         # vis.poll_events()
         # vis.update_renderer()
-        viz.update(markerDisp3D)
+        # viz.update(markerDisp3D)
 
 
         # obtain the displacement field
@@ -346,8 +347,8 @@ while True:
     # heatmap = cv.flip(heatmap,0)
     
     timenow = time.time()-time_0
-    cv.putText(heatmap, f"FPS={int(fps)}",(10,20),cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
-    cv.putText(heatmap, f"T={float(timenow):.2f}",(10,40),cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
+    # cv.putText(heatmap, f"FPS={int(fps)}",(10,20),cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
+    # cv.putText(heatmap, f"T={float(timenow):.2f}",(10,40),cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
 
 
     # draw centroids with largest intensity
@@ -374,7 +375,7 @@ while True:
         maxima = maxima.astype(np.int16)
         maxima_circular_mask = np.zeros_like(z_val).astype(np.uint8)
         for x in maxima:
-            cv.circle(maxima_circular_mask,x,20,255,-1)
+            cv.circle(maxima_circular_mask,x,35,255,-1)
             maxarr = cv.bitwise_and(reg_z.astype(np.uint8),maxima_circular_mask)
             pt = np.unravel_index(np.argmax(maxarr),maxarr.shape)
             cv.drawMarker(heatmap, [pt[1],pt[0]],(0,255,0),cv.MARKER_CROSS,15,1)
