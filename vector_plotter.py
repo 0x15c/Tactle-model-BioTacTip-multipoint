@@ -9,7 +9,8 @@ class VectorFieldVisualizer:
         self.cmap = cmap
         self.vis = o3d.visualization.Visualizer()
         self.vis.create_window()
-        
+        self.coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=40, origin=[20, 20, 20])
+        self.vis.add_geometry(self.coord_frame)
 
         # Add fixed spheres at origins
         self.balls = self._create_origin_balls()
@@ -77,6 +78,8 @@ class VectorFieldVisualizer:
         self.arrows = self._create_arrows(vectors)
         for a in self.arrows:
             self.vis.add_geometry(a, reset_bounding_box=False)
+        # self.coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5, origin=[0, 0, 0])
+        # self.vis.add_geometry(self.coord_frame)
 
         # Refresh view
         self.vis.poll_events()

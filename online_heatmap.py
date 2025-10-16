@@ -13,7 +13,7 @@ from skimage.feature import peak_local_max
 from skimage import data, img_as_float
 from pycpd import DeformableRegistration
 from scipy.interpolate import NearestNDInterpolator
-# from vector_plotter import VectorFieldVisualizer as vfv
+from vector_plotter import VectorFieldVisualizer as vfv
 
 # Notice: image size is 350x350, which is the magic number in this script almost everywhere.
 
@@ -357,7 +357,7 @@ while True:
     # for x in pack[pack[:,2]>35]:
     #     cv.circle(heatmap,x[0:2].astype(np.int16),3,(255,0,0),-1)
     # # heatmap=cv.flip(heatmap,0)
-    gd = grad_descent(z_val,(pack[pack[:,2]>30])[:,0:2]) # adjust threshold for finding maxima here
+    gd = grad_descent(z_val,(pack[pack[:,2]>25])[:,0:2]) # adjust threshold for finding maxima here
 
     
     # if gd.iter_pts.size > 0:
