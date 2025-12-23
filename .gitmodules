@@ -1,0 +1,3 @@
+[submodule "vsp"]
+	path = vsp
+	url = https://github.com/0x15c/vsp.git
