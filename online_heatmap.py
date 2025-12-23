@@ -74,9 +74,6 @@ GaussianKrnlSize = (3,3)
 c_mask = np.zeros((350, 350), dtype=np.uint8)
 cv.circle(c_mask, center, radius, (255), -1)
 
-
-    
-
 '''
     a function takes DBSCAN results, returns a tuple (n, k, 2) where:
     n is the # of clusters
@@ -208,13 +205,6 @@ time_start, time_end, fps = 0, 0, 0
 
 CPD_scale_factor = 1/100 # this value was tried out empirically
 
-# initialize a plt window
-# plt.ion()
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# ax.set_xlim(0-50, 350+50)
-# ax.set_ylim(0-50, 350+50)
-# ax.set_zlim(-200, 200)
 
 # mesh grid is used for interpolation
 xspace = np.linspace(0, 350, 350)
@@ -297,47 +287,6 @@ while True:
         # @TODO early version of 3D the vector plot
 
         disp_vec_mag = np.linalg.norm(markerDisp3D,axis=1)
-        # matplotlib settings
-        # colors = plt.cm.viridis(disp_vec_mag/2000)
-        # quiver_plot = ax.quiver(markerPts3D[:,0], markerPts3D[:,1], markerPts3D[:,2], markerDisp3D[:,0], markerDisp3D[:,1], markerDisp3D[:,2], length=0.08, normalize=False,colors=colors)
-        
-        # plt.draw()
-        # plt.pause(0.1)
-        # quiver_plot.remove()
-
-        # # draw the 3d vector plot
-        # line_set_updated = create_lines(markerPts3D, markerDisp3D)
-        # line_set.points = line_set_updated.points
-        # line_set.lines = line_set_updated.lines
-        # line_set.colors = line_set_updated.colors
-        # vis.update_geometry(line_set)
-        # vis.poll_events()
-        # vis.update_renderer()
-        # viz.update(markerDisp3D)
-
-
-        # obtain the displacement field
-        # r_val is namely the displacement strength of markers
-        # norm_displacement = np.linalg.norm(displacement,axis=1)
-        
-
-        # r_val = griddata(centroids_init, norm_displacement, (xgrid, ygrid), method='linear',fill_value=0.0)
-        # reg_r = gaussian_filter(interpolate_reg(r_val,'cv-image',scaleFactor=20.0),sigma=20)
-        # r_displacement_map = cv.applyColorMap(reg_r, cv.COLORMAP_JET)
-        # cv.imshow("X-Displacement", r_displacement_map)
-
-        # x_val = griddata(centroids_init, displacement[:,0], (xgrid, ygrid), method='linear',fill_value=0.0)
-        # reg_x = gaussian_filter(interpolate_reg(np.abs(x_val),'cv-image'),sigma=20)
-        # x_displacement_map = cv.applyColorMap(reg_x, cv.COLORMAP_JET)
-        # cv.imshow("X-Displacement", x_displacement_map)
-    # show cluster result
-    # ax.clear()
-    # plt.xlim(0,350)
-    # plt.ylim(0,350)
-    # ax.scatter(centroids[:,0],centroids[:,1],c=intensity, cmap='coolwarm', vmin=0, vmax=100)
-    # plt.draw()
-    # plt.pause(0.005)
-    # sparsity extraction
 
     # intensity interpolation
     z_val = griddata(centroids, intensity, (xgrid, ygrid), method='linear',fill_value=0.0) # intensity, i.e. the z directional force
@@ -347,8 +296,8 @@ while True:
     # heatmap = cv.flip(heatmap,0)
     
     timenow = time.time()-time_0
-    # cv.putText(heatmap, f"FPS={int(fps)}",(10,20),cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
-    # cv.putText(heatmap, f"T={float(timenow):.2f}",(10,40),cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
+    cv.putText(heatmap, f"FPS={int(fps)}",(10,20),cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
+    cv.putText(heatmap, f"T={float(timenow):.2f}",(10,40),cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
 
 
     # draw centroids with largest intensity
