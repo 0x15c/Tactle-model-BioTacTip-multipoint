@@ -369,9 +369,16 @@ while True:
     # for x in gd.iter_pts:
     #     cv.circle(heatmap,x[0:2].astype(np.int16),3,(0,255,255),-1)
     if gd.iter_pts.size != 0:
+        heatmap_copy = np.copy(heatmap)
+        cv.imshow('heatmap_copy',heatmap_copy)
+        
         maxima_cls = DBSCAN(eps=30, min_samples=8).fit(gd.iter_pts)
         maxima_clusters = dbscan_extractor(maxima_cls, gd.iter_pts)
         maxima, _ = centroids_calc(maxima_clusters)
+        heatmap_copy = draw_centroid_cv((pack[pack[:,2]>25])[:,0:2],heatmap_copy,(0,0,255),flip=False)
+        heatmap_copy = draw_centroid_cv(gd.iter_pts,heatmap_copy,(255,255,0),flip=False)
+        cv.imshow('gradient_points',heatmap_copy)
+
         maxima = maxima.astype(np.int16)
         maxima_circular_mask = np.zeros_like(z_val).astype(np.uint8)
         for x in maxima:
