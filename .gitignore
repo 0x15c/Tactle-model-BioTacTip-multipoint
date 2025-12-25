@@ -1,4 +1,5 @@
 *.avi
 *.csv
 *.mp4
+*.ipynb
 probreg/*

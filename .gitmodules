@@ -1,3 +1,9 @@
 [submodule "vsp"]
 	path = vsp
 	url = https://github.com/0x15c/vsp.git
+[submodule "learning_based/CPD-Net"]
+	path = learning_based/CPD-Net
+	url = https://github.com/0x15c/CPD-Net
+[submodule "learning_based/CenterNet"]
+	path = learning_based/CenterNet
+	url = https://github.com/0x15c/CenterNet.git
