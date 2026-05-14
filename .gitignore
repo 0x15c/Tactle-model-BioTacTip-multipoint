@@ -3,3 +3,7 @@
 *.mp4
 *.ipynb
 probreg/*
+*.pt
+voxelmorph/wandb/
+voxelmorph/ckpt/
+utils/data/

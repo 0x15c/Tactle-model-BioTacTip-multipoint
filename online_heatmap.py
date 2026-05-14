@@ -312,7 +312,7 @@ def main(cfg: Config):
                 cv.drawMarker(heatmap, [pt[1], pt[0]], (0, 255, 0), cv.MARKER_CROSS, 15, 1)
                 cv.putText(heatmap, f"{z_val[pt]:.2f}", [pt[1] + 5, pt[0] + 15], cv.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1, cv.LINE_AA)
                 maxima_circular_mask = np.zeros_like(z_val).astype(np.uint8)
-
+        cv.imshow('raw',frame)
         cv.imshow('heatmap', heatmap)
 
         if frame_count > 0:
