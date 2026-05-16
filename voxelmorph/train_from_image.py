@@ -22,10 +22,11 @@ FIXED_IMAGE_NAME = "frame_000.jpg"
 RESIZE_TO = None  # (width, height) or None to keep original size
 checkpoint_path = "./ckpt"
 
-batch_size = 64
-epochs = 200
+batch_size = 16
+epochs = 120
 learning_rate = 1e-3
-smoothness_weight = 0.02
+smoothness_weight = 0.0
+bending_weight = 0.5
 seed = 13132
 drop_last = True
 
@@ -157,6 +158,7 @@ def main():
             "epochs": epochs,
             "learning_rate": learning_rate,
             "smoothness_weight": smoothness_weight,
+            "bending_weight": bending_weight,
             "seed": seed,
         },
     )
@@ -193,15 +195,24 @@ def main():
             # loss = total_loss(fixed, warped, flow, smoothness_weight=smoothness_weight)
             sim_loss = similarity_loss(fixed, warped, loss_type="MSE")
             smooth_loss = smoothness_loss(flow)
-            loss = sim_loss + smooth_loss*smoothness_weight
+            bend_loss = bending_energy_loss(flow)
+            loss = sim_loss + smooth_loss * smoothness_weight + bend_loss * bending_weight
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             epoch_loss += loss.item()
             num_batches += 1
-            wandb.log({"train/loss": loss.item(), "train/sim_loss": sim_loss,
-                      "train/smooth_loss": smooth_loss, "epoch": epoch}, step=global_step)
+            wandb.log(
+                {
+                    "train/loss": loss.item(),
+                    "train/sim_loss": sim_loss,
+                    "train/smooth_loss": smooth_loss,
+                    "train/bending_loss": bend_loss,
+                    "epoch": epoch,
+                },
+                step=global_step,
+            )
             global_step += 1
 
         avg_loss = epoch_loss / max(1, num_batches)

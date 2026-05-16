@@ -115,7 +115,49 @@ def smoothness_loss(flow):  # flow: [N, 2, H, W]
     return (ux2_plus_vx2 + uy2_plus_vy2)
 
 
-def total_loss(fixed, warped, flow, smoothness_weight=0.1, sim_measure="MSE"):
+def second_derivative_x(t):  # t: [N, 1, H, W]
+    return t[:, :, :, 2:] - 2.0 * t[:, :, :, 1:-1] + t[:, :, :, :-2]
+
+
+def second_derivative_y(t):  # t: [N, 1, H, W]
+    return t[:, :, 2:, :] - 2.0 * t[:, :, 1:-1, :] + t[:, :, :-2, :]
+
+
+def mixed_derivative_xy(t):  # t: [N, 1, H, W]
+    return (
+        t[:, :, 2:, 2:]
+        - t[:, :, 2:, :-2]
+        - t[:, :, :-2, 2:]
+        + t[:, :, :-2, :-2]
+    ) / 4.0
+
+
+def bending_energy_loss(flow):  # flow: [N, 2, H, W]
+    ux = flow[:, 0:1]
+    uy = flow[:, 1:2]
+
+    ux_xx = second_derivative_x(ux)
+    ux_yy = second_derivative_y(ux)
+    ux_xy = mixed_derivative_xy(ux)
+
+    uy_xx = second_derivative_x(uy)
+    uy_yy = second_derivative_y(uy)
+    uy_xy = mixed_derivative_xy(uy)
+
+    loss_x = ux_xx.pow(2).mean() + ux_yy.pow(2).mean() + 2.0 * ux_xy.pow(2).mean()
+    loss_y = uy_xx.pow(2).mean() + uy_yy.pow(2).mean() + 2.0 * uy_xy.pow(2).mean()
+    return loss_x + loss_y
+
+
+def total_loss(
+    fixed,
+    warped,
+    flow,
+    smoothness_weight=0.1,
+    bending_weight=0.0,
+    sim_measure="MSE",
+):
     sim = similarity_loss(fixed, warped, loss_type=sim_measure)
     smooth = smoothness_loss(flow)
-    return sim + smoothness_weight * smooth
+    bending = bending_energy_loss(flow)
+    return sim + smoothness_weight * smooth + bending_weight * bending
