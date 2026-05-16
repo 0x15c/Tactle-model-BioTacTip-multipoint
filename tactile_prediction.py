@@ -23,7 +23,7 @@ class Config:
     video_codec: str = "XVID"
 
     # Learned displacement model
-    model_weights_path: str = "voxelmorph/ckpt/voxelmorph2d_images_70_new_sensor.pt"
+    model_weights_path: str = "voxelmorph/ckpt/biotactip_voxelmorph2d_115.pt"
     device: Optional[str] = None
 
     # Image geometry
@@ -309,13 +309,15 @@ def render_intensity_heatmap(
 
 
 @torch.no_grad()
-def infer_flow(
+def infer_warped_and_flow(
     model: VoxelMorph2D,
     moving_tensor: torch.Tensor,
     fixed_tensor: torch.Tensor,
-) -> np.ndarray:
-    _, flow = model(moving_tensor, fixed_tensor)
-    return flow.squeeze(0).detach().cpu().numpy()
+) -> tuple[np.ndarray, np.ndarray]:
+    warped, flow = model(moving_tensor, fixed_tensor)
+    warped_np = warped.squeeze().detach().cpu().numpy()
+    flow_np = flow.squeeze(0).detach().cpu().numpy()
+    return warped_np, flow_np
 
 
 def blur_flow_field(flow: np.ndarray, ksize: int) -> np.ndarray:
@@ -387,6 +389,33 @@ def render_flow_heatmap(flow: np.ndarray, max_disp_viz_mag: float) -> np.ndarray
     return cv.applyColorMap(np.uint8(flow_norm * 255), cv.COLORMAP_PLASMA)
 
 
+def gray_panel(gray: np.ndarray, label: str) -> np.ndarray:
+    panel = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+    cv.putText(panel, label, (10, 20), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
+    return panel
+
+
+def render_registration_comparison(
+    rest_gray: np.ndarray,
+    current_gray: np.ndarray,
+    warped_current: np.ndarray,
+) -> np.ndarray:
+    warped_u8 = np.uint8(np.clip(warped_current, 0.0, 1.0) * 255.0)
+    diff = cv.absdiff(rest_gray, warped_u8)
+    diff_color = cv.applyColorMap(diff, cv.COLORMAP_INFERNO)
+    cv.putText(diff_color, "absdiff(rest, warped)", (10, 20), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
+
+    return np.concatenate(
+        (
+            gray_panel(rest_gray, "rest/fixed"),
+            gray_panel(current_gray, "current/moving"),
+            gray_panel(warped_u8, "warped current -> rest"),
+            diff_color,
+        ),
+        axis=1,
+    )
+
+
 def main(cfg: Config):
     device = get_device(cfg.device)
     print(f"Using device: {device}")
@@ -435,6 +464,7 @@ def main(cfg: Config):
     time_0 = time.time()
     prev_time = time.time()
     rest_tensor = None
+    rest_gray = None
     rest_centroids = np.zeros((0, 2), dtype=np.float32)
 
     while True:
@@ -450,6 +480,7 @@ def main(cfg: Config):
         intensity_heatmap = render_intensity_heatmap(grey_frame_corrected, xgrid, ygrid, cropped_size, cfg)
 
         if frame_count == cfg.frame_skip_init:
+            rest_gray = grey_frame_corrected.copy()
             rest_tensor = gray_to_tensor(grey_frame_corrected, device)
             rest_centroids = find_rest_marker_centroids(
                 grey_frame_corrected,
@@ -477,7 +508,7 @@ def main(cfg: Config):
             moving_tensor = gray_to_tensor(grey_frame_corrected, device)
             if device.type == "cuda":
                 torch.cuda.synchronize()
-            flow = infer_flow(model, moving_tensor, rest_tensor)
+            warped_current, flow = infer_warped_and_flow(model, moving_tensor, rest_tensor)
             if device.type == "cuda":
                 torch.cuda.synchronize()
 
@@ -492,6 +523,7 @@ def main(cfg: Config):
             overlay = cv.cvtColor(grey_frame_corrected, cv.COLOR_GRAY2BGR)
             overlay = draw_displacement_vectors(overlay, rest_centroids, displacement_viz)
             cv.imshow("Learned Displacement Field", overlay)
+            cv.imshow("Registration Comparison", render_registration_comparison(rest_gray, grey_frame_corrected, warped_current))
 
             cv.putText(
                 displacement_heatmap,

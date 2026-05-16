@@ -7,3 +7,4 @@ probreg/*
 voxelmorph/wandb/
 voxelmorph/ckpt/
 utils/data/
+utils/captured_frames

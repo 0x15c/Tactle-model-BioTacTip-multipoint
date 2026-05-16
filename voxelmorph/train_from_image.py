@@ -16,17 +16,17 @@ except ImportError as exc:
     ) from exc
 
 # select dir to images
-IMAGE_DIR = "../utils/data/capture_01/"
+IMAGE_DIR = "../utils/captured_frames/"
 # e.g. "fixed.png" or None for random fixed images
 FIXED_IMAGE_NAME = "frame_000.jpg"
 RESIZE_TO = None  # (width, height) or None to keep original size
 checkpoint_path = "./ckpt"
 
-batch_size = 32
-epochs = 100
+batch_size = 64
+epochs = 200
 learning_rate = 1e-3
-smoothness_weight = 0.1
-seed = 13
+smoothness_weight = 0.02
+seed = 13132
 drop_last = True
 
 WANDB_PROJECT = "voxelmorph_biotactip"
@@ -210,7 +210,7 @@ def main():
                   "epoch": epoch}, step=global_step)
         if epoch % 5 == 0:
             torch.save(model.state_dict(),
-                       f"{checkpoint_path}/voxelmorph2d_images_{epoch}_new_sensor.pt")
+                       f"{checkpoint_path}/biotactip_voxelmorph2d_{epoch}.pt")
             print(f"Saved checkpoint to {checkpoint_path}")
 
     wandb.finish()

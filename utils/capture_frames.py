@@ -272,7 +272,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-images",
         type=int,
-        default=100,
+        default=1000,
         help="Number of images to save.",
     )
 
