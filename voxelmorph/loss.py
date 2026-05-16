@@ -98,7 +98,7 @@ def similarity_loss(fixed, warped, loss_type=["MSE", "NCC"]):
             return torch.mean((fixed - warped) ** 2)
         case "NCC":  # normalised cross correlation
             NCC_Loss = NCC2D(win=9, signed=False)
-            return NCC_Loss(fixed, warped)
+            return NCC_Loss.loss(fixed, warped).mean()
 
 
 def smoothness_loss(flow):  # flow: [N, 2, H, W]

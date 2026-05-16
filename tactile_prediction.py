@@ -23,7 +23,7 @@ class Config:
     video_codec: str = "XVID"
 
     # Learned displacement model
-    model_weights_path: str = "voxelmorph/ckpt/biotactip_voxelmorph2d_85.pt"
+    model_weights_path: str = "voxelmorph/ckpt/biotactip_voxelmorph2d_60.pt"
     device: Optional[str] = None
 
     # Image geometry
@@ -395,15 +395,31 @@ def gray_panel(gray: np.ndarray, label: str) -> np.ndarray:
     return panel
 
 
+def registration_losses(rest_gray: np.ndarray, warped_current: np.ndarray) -> tuple[float, float]:
+    rest = rest_gray.astype(np.float32) / 255.0
+    warped = np.clip(warped_current.astype(np.float32), 0.0, 1.0)
+
+    mse_loss = float(np.mean((rest - warped) ** 2))
+
+    rest_zero_mean = rest - np.mean(rest)
+    warped_zero_mean = warped - np.mean(warped)
+    denom = np.sqrt(np.mean(rest_zero_mean**2) * np.mean(warped_zero_mean**2)) + 1e-8
+    ncc_loss = -float(np.mean(rest_zero_mean * warped_zero_mean) / denom)
+    return mse_loss, ncc_loss
+
+
 def render_registration_comparison(
     rest_gray: np.ndarray,
     current_gray: np.ndarray,
     warped_current: np.ndarray,
 ) -> np.ndarray:
     warped_u8 = np.uint8(np.clip(warped_current, 0.0, 1.0) * 255.0)
+    mse_loss, ncc_loss = registration_losses(rest_gray, warped_current)
     diff = cv.absdiff(rest_gray, warped_u8)
     diff_color = cv.applyColorMap(diff, cv.COLORMAP_INFERNO)
     cv.putText(diff_color, "absdiff(rest, warped)", (10, 20), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
+    cv.putText(diff_color, f"MSE loss: {mse_loss:.6f}", (10, 45), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
+    cv.putText(diff_color, f"NCC loss: {ncc_loss:.6f}", (10, 70), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
 
     return np.concatenate(
         (

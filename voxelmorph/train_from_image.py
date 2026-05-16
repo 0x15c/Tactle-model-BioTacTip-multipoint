@@ -22,11 +22,11 @@ FIXED_IMAGE_NAME = "frame_000.jpg"
 RESIZE_TO = None  # (width, height) or None to keep original size
 checkpoint_path = "./ckpt"
 
-batch_size = 16
+batch_size = 32
 epochs = 120
 learning_rate = 1e-3
 smoothness_weight = 0.0
-bending_weight = 0.5
+bending_weight = 5.0
 seed = 13132
 drop_last = True
 
@@ -193,7 +193,7 @@ def main():
 
             warped, flow = model(moving, fixed)
             # loss = total_loss(fixed, warped, flow, smoothness_weight=smoothness_weight)
-            sim_loss = similarity_loss(fixed, warped, loss_type="MSE")
+            sim_loss = similarity_loss(fixed, warped, loss_type="NCC")
             smooth_loss = smoothness_loss(flow)
             bend_loss = bending_energy_loss(flow)
             loss = sim_loss + smooth_loss * smoothness_weight + bend_loss * bending_weight
