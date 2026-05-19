@@ -99,6 +99,8 @@ def similarity_loss(fixed, warped, loss_type=["MSE", "NCC"]):
         case "NCC":  # normalised cross correlation
             NCC_Loss = NCC2D(win=9, signed=False)
             return NCC_Loss.loss(fixed, warped).mean()
+        case "mi":
+            return mutual_information_loss(fixed, warped)
 
 
 def smoothness_loss(flow):  # flow: [N, 2, H, W]
@@ -161,3 +163,72 @@ def total_loss(
     smooth = smoothness_loss(flow)
     bending = bending_energy_loss(flow)
     return sim + smoothness_weight * smooth + bending_weight * bending
+
+def mutual_information_loss(
+    a,
+    b,
+    num_bins=64,
+    sigma=0.02,
+    eps=1e-8,
+):
+    """
+    Differentiable negative mutual information loss.
+
+    a, b: B x C x H x W, values expected in [0, 1]
+    returns: loss to minimize, i.e. -MI(a, b)
+
+    This uses soft histogram binning with Gaussian kernels.
+    """
+    import torch
+
+    if a.shape != b.shape:
+        raise ValueError(f"Shape mismatch: {a.shape} vs {b.shape}")
+
+    # Flatten over channels and pixels.
+    # Shape: B x N
+    a = a.reshape(a.shape[0], -1).clamp(0.0, 1.0)
+    b = b.reshape(b.shape[0], -1).clamp(0.0, 1.0)
+
+    device = a.device
+    dtype = a.dtype
+
+    bin_centers = torch.linspace(
+        0.0,
+        1.0,
+        num_bins,
+        device=device,
+        dtype=dtype,
+    )
+
+    # Soft assignment to bins.
+    # pa: B x N x num_bins
+    pa = torch.exp(-0.5 * ((a[..., None] - bin_centers) / sigma) ** 2)
+    pb = torch.exp(-0.5 * ((b[..., None] - bin_centers) / sigma) ** 2)
+
+    pa = pa / (pa.sum(dim=-1, keepdim=True) + eps)
+    pb = pb / (pb.sum(dim=-1, keepdim=True) + eps)
+
+    # Marginal distributions: B x num_bins
+    p_a = pa.mean(dim=1)
+    p_b = pb.mean(dim=1)
+
+    # Joint distribution: B x num_bins x num_bins
+    p_ab = torch.bmm(pa.transpose(1, 2), pb)
+    p_ab = p_ab / (p_ab.sum(dim=(1, 2), keepdim=True) + eps)
+
+    p_a = p_a / (p_a.sum(dim=1, keepdim=True) + eps)
+    p_b = p_b / (p_b.sum(dim=1, keepdim=True) + eps)
+
+    # Mutual information:
+    # MI = sum p(a,b) log( p(a,b) / (p(a)p(b)) )
+    p_prod = torch.bmm(p_a.unsqueeze(2), p_b.unsqueeze(1))
+
+    mi = p_ab * (
+        torch.log(p_ab + eps)
+        - torch.log(p_prod + eps)
+    )
+
+    mi = mi.sum(dim=(1, 2))
+
+    # Minimize negative MI.
+    return -mi.mean()

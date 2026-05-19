@@ -193,7 +193,7 @@ def main():
 
             warped, flow = model(moving, fixed)
             # loss = total_loss(fixed, warped, flow, smoothness_weight=smoothness_weight)
-            sim_loss = similarity_loss(fixed, warped, loss_type="NCC")
+            sim_loss = similarity_loss(fixed, warped, loss_type="mi")
             smooth_loss = smoothness_loss(flow)
             bend_loss = bending_energy_loss(flow)
             loss = sim_loss + smooth_loss * smoothness_weight + bend_loss * bending_weight

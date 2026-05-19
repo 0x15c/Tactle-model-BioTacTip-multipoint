@@ -23,7 +23,7 @@ class Config:
     video_codec: str = "XVID"
 
     # Learned displacement model
-    model_weights_path: str = "voxelmorph/ckpt/biotactip_voxelmorph2d_60.pt"
+    model_weights_path: str = "voxelmorph/ckpt/biotactip_voxelmorph2d_20.pt"
     device: Optional[str] = None
 
     # Image geometry
