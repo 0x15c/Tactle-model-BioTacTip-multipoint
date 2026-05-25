@@ -12,6 +12,7 @@ from scipy.ndimage import gaussian_filter
 from sklearn.cluster import DBSCAN
 
 from voxelmorph.model import VoxelMorph2D
+from voxelmorph.preprocessing import preprocess_registration_image, upsample_flow_to_shape
 
 
 @dataclass
@@ -23,8 +24,10 @@ class Config:
     video_codec: str = "XVID"
 
     # Learned displacement model
-    model_weights_path: str = "voxelmorph/ckpt/biotactip_voxelmorph2d_2000.pt"
+    model_weights_path: str = "voxelmorph/ckpt/biotactip_voxelmorph2d_300.pt"
     device: Optional[str] = None
+    model_preprocess: str = "maxpool"
+    model_input_size: Tuple[int, int] = (32, 32)
 
     # Image geometry
     image_size: int = 350
@@ -130,11 +133,23 @@ def crop_and_preprocess_frame(
     return frame_cropped, grey_frame_corrected
 
 
-def gray_to_tensor(gray: np.ndarray, device: torch.device) -> torch.Tensor:
-    image = gray.astype(np.float32)
-    if image.max() > 1.0:
-        image /= 255.0
+def gray_to_tensor(
+    gray: np.ndarray,
+    device: torch.device,
+    preprocess_mode: str = "none",
+    model_input_size: tuple[int, int] | None = None,
+) -> torch.Tensor:
+    image = preprocess_registration_image(
+        gray,
+        mode=preprocess_mode,
+        size=model_input_size,
+    )
     return torch.from_numpy(image)[None, None].to(device)
+
+
+def tensor_to_gray_u8(tensor: torch.Tensor) -> np.ndarray:
+    image = tensor.squeeze().detach().cpu().numpy()
+    return np.uint8(np.clip(image, 0.0, 1.0) * 255.0)
 
 
 def find_rest_marker_centroids(
@@ -465,10 +480,60 @@ def render_flow_phase(flow: np.ndarray, max_disp_viz_mag: float) -> np.ndarray:
     return phase_bgr
 
 
+def warp_gray_with_flow(gray: np.ndarray, flow: np.ndarray) -> np.ndarray:
+    """
+    Warp a full-resolution grayscale image with a backward-sampling pixel flow.
+
+    The convention matches SpatialTransformer:
+        warped(y, x) = gray(y + flow_y, x + flow_x)
+    """
+    height, width = gray.shape
+    x, y = np.meshgrid(
+        np.arange(width, dtype=np.float32),
+        np.arange(height, dtype=np.float32),
+        indexing="xy",
+    )
+    map_x = x + flow[0].astype(np.float32)
+    map_y = y + flow[1].astype(np.float32)
+    return cv.remap(
+        gray,
+        map_x,
+        map_y,
+        interpolation=cv.INTER_LINEAR,
+        borderMode=cv.BORDER_REFLECT101,
+    )
+
+
+def render_full_res_warp_comparison(
+    rest_gray: np.ndarray,
+    current_gray: np.ndarray,
+    flow: np.ndarray,
+) -> np.ndarray:
+    warped_current = warp_gray_with_flow(current_gray, flow)
+    diff = cv.absdiff(rest_gray, warped_current)
+    diff_color = cv.applyColorMap(diff, cv.COLORMAP_INFERNO)
+    return np.concatenate(
+        (
+            gray_panel(rest_gray, "rest/fixed full-res"),
+            gray_panel(current_gray, "current/moving full-res"),
+            gray_panel(warped_current, "inverse warped moving full-res"),
+            diff_color,
+        ),
+        axis=1,
+    )
+
+
 def gray_panel(gray: np.ndarray, label: str) -> np.ndarray:
     panel = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
     cv.putText(panel, label, (10, 20), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
     return panel
+
+
+def resize_gray_for_display(gray: np.ndarray, target_shape: tuple[int, int] | None) -> np.ndarray:
+    if target_shape is None or gray.shape == target_shape:
+        return gray
+    target_h, target_w = target_shape
+    return cv.resize(gray, (target_w, target_h), interpolation=cv.INTER_NEAREST)
 
 
 def registration_losses(rest_gray: np.ndarray, warped_current: np.ndarray) -> tuple[float, float]:
@@ -488,20 +553,27 @@ def render_registration_comparison(
     rest_gray: np.ndarray,
     current_gray: np.ndarray,
     warped_current: np.ndarray,
+    display_shape: tuple[int, int] | None = None,
 ) -> np.ndarray:
     warped_u8 = np.uint8(np.clip(warped_current, 0.0, 1.0) * 255.0)
     mse_loss, ncc_loss = registration_losses(rest_gray, warped_current)
     diff = cv.absdiff(rest_gray, warped_u8)
-    diff_color = cv.applyColorMap(diff, cv.COLORMAP_INFERNO)
+
+    rest_display = resize_gray_for_display(rest_gray, display_shape)
+    current_display = resize_gray_for_display(current_gray, display_shape)
+    warped_display = resize_gray_for_display(warped_u8, display_shape)
+    diff_display = resize_gray_for_display(diff, display_shape)
+
+    diff_color = cv.applyColorMap(diff_display, cv.COLORMAP_INFERNO)
     cv.putText(diff_color, "absdiff(rest, warped)", (10, 20), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
     cv.putText(diff_color, f"MSE loss: {mse_loss:.6f}", (10, 45), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
     cv.putText(diff_color, f"NCC loss: {ncc_loss:.6f}", (10, 70), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
 
     return np.concatenate(
         (
-            gray_panel(rest_gray, "rest/fixed"),
-            gray_panel(current_gray, "current/moving"),
-            gray_panel(warped_u8, "warped current -> rest"),
+            gray_panel(rest_display, "rest/fixed"),
+            gray_panel(current_display, "current/moving"),
+            gray_panel(warped_display, "warped current -> rest"),
             diff_color,
         ),
         axis=1,
@@ -511,6 +583,7 @@ def render_registration_comparison(
 def main(cfg: Config):
     device = get_device(cfg.device)
     print(f"Using device: {device}")
+    print(f"Model preprocessing: {cfg.model_preprocess}, input size: {cfg.model_input_size}")
     model = get_voxelmorph_model(cfg.model_weights_path, device)
 
     cap = cv.VideoCapture(cfg.input_source)
@@ -557,6 +630,7 @@ def main(cfg: Config):
     prev_time = time.time()
     rest_tensor = None
     rest_gray = None
+    rest_model_gray = None
     rest_centroids = np.zeros((0, 2), dtype=np.float32)
 
     while True:
@@ -573,7 +647,13 @@ def main(cfg: Config):
 
         if frame_count == cfg.frame_skip_init:
             rest_gray = grey_frame_corrected.copy()
-            rest_tensor = gray_to_tensor(grey_frame_corrected, device)
+            rest_tensor = gray_to_tensor(
+                grey_frame_corrected,
+                device,
+                preprocess_mode=cfg.model_preprocess,
+                model_input_size=cfg.model_input_size,
+            )
+            rest_model_gray = tensor_to_gray_u8(rest_tensor)
             rest_centroids = find_rest_marker_centroids(
                 grey_frame_corrected,
                 cfg.rest_marker_threshold,
@@ -597,13 +677,20 @@ def main(cfg: Config):
                 cv.LINE_AA,
             )
         else:
-            moving_tensor = gray_to_tensor(grey_frame_corrected, device)
+            moving_tensor = gray_to_tensor(
+                grey_frame_corrected,
+                device,
+                preprocess_mode=cfg.model_preprocess,
+                model_input_size=cfg.model_input_size,
+            )
+            moving_model_gray = tensor_to_gray_u8(moving_tensor)
             if device.type == "cuda":
                 torch.cuda.synchronize()
-            warped_current, flow = infer_warped_and_flow(model, moving_tensor, rest_tensor)
+            warped_current_model, flow_model = infer_warped_and_flow(model, moving_tensor, rest_tensor)
             if device.type == "cuda":
                 torch.cuda.synchronize()
 
+            flow = upsample_flow_to_shape(flow_model, grey_frame_corrected.shape)
             flow = blur_flow_field(flow, cfg.flow_blur_ksize)
             cv.imshow("Flow Direction Phase", render_flow_phase(flow, cfg.max_disp_viz_mag))
             displacement = sample_flow_at_points(flow, rest_centroids, cfg.flow_sample_radius)
@@ -616,7 +703,19 @@ def main(cfg: Config):
             overlay = cv.cvtColor(grey_frame_corrected, cv.COLOR_GRAY2BGR)
             overlay = draw_displacement_vectors(overlay, rest_centroids, displacement_viz)
             cv.imshow("Learned Displacement Field", overlay)
-            cv.imshow("Registration Comparison", render_registration_comparison(rest_gray, grey_frame_corrected, warped_current))
+            cv.imshow(
+                "Full-Resolution Inverse Warp",
+                render_full_res_warp_comparison(rest_gray, grey_frame_corrected, flow),
+            )
+            cv.imshow(
+                "Registration Comparison",
+                render_registration_comparison(
+                    rest_model_gray,
+                    moving_model_gray,
+                    warped_current_model,
+                    display_shape=grey_frame_corrected.shape,
+                ),
+            )
 
             cv.putText(
                 displacement_heatmap,
@@ -667,6 +766,19 @@ if __name__ == "__main__":
     parser.add_argument("--intensity-threshold", type=int, default=Config.threshold_bin, help="threshold for normal-force marker intensity heatmap")
     parser.add_argument("--intensity-sigma", type=float, default=Config.gaussian_sigma, help="Gaussian smoothing sigma for normal-force heatmap")
     parser.add_argument("--vector-scale", type=float, default=Config.vector_visual_scale, help="visual-only multiplier for sampled displacement vectors")
+    parser.add_argument(
+        "--model-preprocess",
+        type=str,
+        default=Config.model_preprocess,
+        choices=("none", "area", "maxpool"),
+        help="preprocessing applied before VoxelMorph inference",
+    )
+    parser.add_argument(
+        "--model-input-size",
+        type=int,
+        default=Config.model_input_size[0],
+        help="square input size for area/maxpool model preprocessing",
+    )
     args = parser.parse_args()
 
     cfg = Config()
@@ -679,5 +791,7 @@ if __name__ == "__main__":
     cfg.threshold_bin = args.intensity_threshold
     cfg.gaussian_sigma = args.intensity_sigma
     cfg.vector_visual_scale = args.vector_scale
+    cfg.model_preprocess = args.model_preprocess
+    cfg.model_input_size = (args.model_input_size, args.model_input_size)
 
     main(cfg)
