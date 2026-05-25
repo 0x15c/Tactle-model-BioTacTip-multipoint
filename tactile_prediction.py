@@ -23,7 +23,7 @@ class Config:
     video_codec: str = "XVID"
 
     # Learned displacement model
-    model_weights_path: str = "voxelmorph/ckpt/biotactip_voxelmorph2d_20.pt"
+    model_weights_path: str = "voxelmorph/ckpt/biotactip_voxelmorph2d_2000.pt"
     device: Optional[str] = None
 
     # Image geometry
@@ -389,6 +389,82 @@ def render_flow_heatmap(flow: np.ndarray, max_disp_viz_mag: float) -> np.ndarray
     return cv.applyColorMap(np.uint8(flow_norm * 255), cv.COLORMAP_PLASMA)
 
 
+def magnitude_weighted_argument_loss_np(flow: np.ndarray, eps: float = 1e-6) -> float:
+    mag = np.sqrt(np.sum(flow**2, axis=0, keepdims=True) + eps)
+    q = flow / mag
+
+    q_x1 = q[:, :, 1:]
+    q_x0 = q[:, :, :-1]
+    mag_x = np.minimum(mag[:, :, 1:], mag[:, :, :-1])
+    dot_x = np.clip(np.sum(q_x1 * q_x0, axis=0, keepdims=True), -1.0, 1.0)
+    loss_x = mag_x * (1.0 - dot_x)
+
+    q_y1 = q[:, 1:, :]
+    q_y0 = q[:, :-1, :]
+    mag_y = np.minimum(mag[:, 1:, :], mag[:, :-1, :])
+    dot_y = np.clip(np.sum(q_y1 * q_y0, axis=0, keepdims=True), -1.0, 1.0)
+    loss_y = mag_y * (1.0 - dot_y)
+
+    return float(np.mean(loss_x) + np.mean(loss_y))
+
+
+def render_flow_phase(flow: np.ndarray, max_disp_viz_mag: float) -> np.ndarray:
+    fx = flow[0]
+    fy = flow[1]
+    angle = np.arctan2(fy, fx)
+    magnitude = np.sqrt(fx**2 + fy**2)
+    argument_loss = magnitude_weighted_argument_loss_np(flow)
+
+    hue = np.uint8(((angle + np.pi) / (2.0 * np.pi)) * 179.0)
+    denom = max(max_disp_viz_mag, float(magnitude.max()), 1e-6)
+    saturation = np.uint8(np.clip(magnitude / denom, 0.0, 1.0) * 255.0)
+    value = np.full_like(hue, 255, dtype=np.uint8)
+
+    hsv = cv.merge((hue, saturation, value))
+    phase_bgr = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
+    cv.putText(
+        phase_bgr,
+        "Flow direction: hue=angle, saturation=magnitude",
+        (10, 20),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 0, 0),
+        2,
+        cv.LINE_AA,
+    )
+    cv.putText(
+        phase_bgr,
+        "Flow direction: hue=angle, saturation=magnitude",
+        (10, 20),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+        cv.LINE_AA,
+    )
+    cv.putText(
+        phase_bgr,
+        f"argument loss: {argument_loss:.6f}",
+        (10, 45),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 0, 0),
+        2,
+        cv.LINE_AA,
+    )
+    cv.putText(
+        phase_bgr,
+        f"argument loss: {argument_loss:.6f}",
+        (10, 45),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+        cv.LINE_AA,
+    )
+    return phase_bgr
+
+
 def gray_panel(gray: np.ndarray, label: str) -> np.ndarray:
     panel = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
     cv.putText(panel, label, (10, 20), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
@@ -529,6 +605,7 @@ def main(cfg: Config):
                 torch.cuda.synchronize()
 
             flow = blur_flow_field(flow, cfg.flow_blur_ksize)
+            cv.imshow("Flow Direction Phase", render_flow_phase(flow, cfg.max_disp_viz_mag))
             displacement = sample_flow_at_points(flow, rest_centroids, cfg.flow_sample_radius)
             displacement_viz = displacement * cfg.vector_visual_scale
             mean_disp = displacement.mean(axis=0) if displacement.size else np.zeros(2, dtype=np.float32)
