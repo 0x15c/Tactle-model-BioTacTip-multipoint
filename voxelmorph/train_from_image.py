@@ -26,19 +26,20 @@ MODEL_PREPROCESS = "maxpool"  # "none", "area", or "maxpool"
 MODEL_INPUT_SIZE = (32, 32)  # (width, height), used when MODEL_PREPROCESS != "none"
 checkpoint_path = "./ckpt"
 
-batch_size = 256
-epochs = 500
+batch_size = 32
+epochs = 200
 learning_rate = 1e-3
 model_similarity_weight = 0.5
 use_original_similarity_loss = True
 original_similarity_weight = 1.0 - model_similarity_weight
+# reg terms: for biotactip, use 5.0 and 1.0.
 bending_weight = 5.0
 argument_weight = 1.0
-seed = 13132
+seed = 1313213
 drop_last = True
 
 WANDB_PROJECT = "voxelmorph_biotactip"
-WANDB_RUN_NAME = "voxelmorph_biotactip"
+WANDB_RUN_NAME = "voxelmorph_biotactip_new_sensor"
 HFLIP_PROB = 0.65
 ROTATE_CHOICES = (0, 1, 3)  # 0, +90, -90 (k=3)
 
@@ -346,7 +347,7 @@ def main():
         print(f"Epoch {epoch}/{epochs} - Loss: {avg_loss:.4f}")
         wandb.log({"train/epoch_loss": avg_loss,
                   "epoch": epoch}, step=global_step)
-        if epoch % 50 == 0:
+        if epoch % 20 == 0:
             os.makedirs(checkpoint_path, exist_ok=True)
             torch.save(model.state_dict(),
                        f"{checkpoint_path}/biotactip_voxelmorph2d_{epoch}.pt")

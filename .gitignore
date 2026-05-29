@@ -8,3 +8,6 @@ voxelmorph/wandb/
 voxelmorph/ckpt/
 utils/data/
 utils/captured_frames
+*.jpg
+*.png
+synthetic_tps_dataset/
