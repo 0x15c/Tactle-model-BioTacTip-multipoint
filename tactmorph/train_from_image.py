@@ -6,9 +6,14 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from loss import *
-from model import VoxelMorph2D
-from preprocessing import preprocess_registration_image
+try:
+    from .loss import *
+    from .model import TactMorph2D
+    from .preprocessing import preprocess_registration_image
+except ImportError:
+    from loss import *
+    from model import TactMorph2D
+    from preprocessing import preprocess_registration_image
 
 try:
     import wandb
@@ -38,8 +43,8 @@ argument_weight = 1.0
 seed = 1313213
 drop_last = True
 
-WANDB_PROJECT = "voxelmorph_biotactip"
-WANDB_RUN_NAME = "voxelmorph_biotactip_new_sensor"
+WANDB_PROJECT = "tactmorph_biotactip"
+WANDB_RUN_NAME = "tactmorph_biotactip_new_sensor"
 HFLIP_PROB = 0.65
 ROTATE_CHOICES = (0, 1, 3)  # 0, +90, -90 (k=3)
 
@@ -271,7 +276,7 @@ def main():
         },
     )
 
-    model = VoxelMorph2D().to(device)
+    model = TactMorph2D().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     model.train()
@@ -350,7 +355,7 @@ def main():
         if epoch % 20 == 0:
             os.makedirs(checkpoint_path, exist_ok=True)
             torch.save(model.state_dict(),
-                       f"{checkpoint_path}/d_sight_voxelmorph2d_{epoch}.pt")
+                       f"{checkpoint_path}/d_sight_tactmorph2d_{epoch}.pt")
             print(f"Saved checkpoint to {checkpoint_path}")
 
     wandb.finish()

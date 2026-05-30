@@ -1,18 +1,6 @@
-**Poster:**
+# TactMorph: Towards General Solution for the Marker Displacement Problem
 
-<img width="6622" height="9362" alt="Poster_BioTacTip_Interpretable_Model" src="https://github.com/user-attachments/assets/5813227f-f933-47f2-ab42-563df7f5158f" />
+## **Introduction** 
+We implemented the learning-based image registration algorithm, [VoxelMorph](https://www.mit.edu/~adalca/files/papers/tmi2019_voxelmorph.pdf) (referred to as TactMorph in this repo), as a [Marker Displacement Method](https://doi.org/10.1109/JSEN.2023.3255861) in tactile perception. MDM aims to identify marker displacement between a pair of tactile images, where markers are at rest (or at their initial positions) and are moved under external force. Current MDM approaches are neither robust to marker aliasing nor able to handle occlusion, or tracking loss during marker matching (e.g. trivial matching). Instead of directly adopting the VoxelMorph algorithm, we downsample the input image pair to a very low resolution before feeding it into the U-Net model to prevent marker aliasing during registration. Experiment results showed that this small variation can effectively alleviate marker aliasing while preserving the reconstruction quality in the context of MDM.
 
-### Aim of this work: Establish an accurate multi-point force reconstruction, based on BioTacTip, incl.: 
-- Z-axis normal force 
-- X, Y axis shear force 
-- Z-axis moment
-
-Next steps:
-1) Calibrate the sensor with ground truth
-2) Design grasping experiments with advantages of our reconstruction result
-3) ~*Optional?* Running by CPU is too slow. Maybe the CPD part algorithm could be rewritten by CuPy.~ The GPU version is even slower.
-4) Find if we can address the difficulty in terms of computing by implementing GNN.
-
-
-The CPD library we use here is contributed by Gatti et al. in their paper `Gatti et al., (2022). PyCPD: Pure NumPy Implementation of the Coherent Point Drift Algorithm. Journal of Open Source Software, 7(80), 4681, https://doi.org/10.21105/joss.04681` and GitHub Repo: https://github.com/siavashk/pycpd
-
+![alt text](figures/aliasing.png)

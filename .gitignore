@@ -4,12 +4,13 @@
 *.ipynb
 probreg/*
 *.pt
-voxelmorph/wandb/
-voxelmorph/ckpt/
+tactmorph/wandb/
+tactmorph/ckpt/
 utils/data/
 utils/captured_frames
 *.jpg
 *.png
+!tactmorph/fig.png
 synthetic_tps_dataset/
 **/__pycache__/
 **/checkpoints

@@ -12,8 +12,8 @@ from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
 from sklearn.cluster import DBSCAN
 
-from voxelmorph.model import VoxelMorph2D
-from voxelmorph.preprocessing import preprocess_registration_image, upsample_flow_to_shape
+from tactmorph.model import TactMorph2D
+from tactmorph.preprocessing import preprocess_registration_image, upsample_flow_to_shape
 
 
 @dataclass
@@ -25,7 +25,7 @@ class Config:
     video_codec: str = "XVID"
 
     # Learned displacement model
-    model_weights_path: str = "voxelmorph/ckpt/biotactip_voxelmorph2d_200.pt"
+    model_weights_path: str = "tactmorph/ckpt/biotactip_tactmorph2d_200.pt"
     device: Optional[str] = None
     model_preprocess: str = "maxpool"
     model_input_size: Tuple[int, int] = (32, 32)
@@ -127,13 +127,13 @@ def get_device(device_name: Optional[str]) -> torch.device:
     return torch.device(device_name)
 
 
-def get_voxelmorph_model(weights_path: str, device: torch.device) -> VoxelMorph2D:
+def get_tactmorph_model(weights_path: str, device: torch.device) -> TactMorph2D:
     checkpoint = Path(weights_path)
     if not checkpoint.exists():
-        raise FileNotFoundError(f"VoxelMorph checkpoint not found: {checkpoint}")
+        raise FileNotFoundError(f"TactMorph checkpoint not found: {checkpoint}")
 
     state = torch.load(checkpoint, map_location=device)
-    model = VoxelMorph2D()
+    model = TactMorph2D()
     if isinstance(state, torch.nn.Module):
         model = state
     else:
@@ -358,7 +358,7 @@ def render_intensity_heatmap(
 
 @torch.no_grad()
 def infer_warped_and_flow(
-    model: VoxelMorph2D,
+    model: TactMorph2D,
     moving_tensor: torch.Tensor,
     fixed_tensor: torch.Tensor,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -617,7 +617,7 @@ def main(cfg: Config):
     device = get_device(cfg.device)
     print(f"Using device: {device}")
     print(f"Model preprocessing: {cfg.model_preprocess}, input size: {cfg.model_input_size}")
-    model = get_voxelmorph_model(cfg.model_weights_path, device)
+    model = get_tactmorph_model(cfg.model_weights_path, device)
 
     cap = cv.VideoCapture(cfg.input_source)
     if not cap.isOpened():
@@ -792,7 +792,7 @@ if __name__ == "__main__":
     parser.add_argument("--input", type=str, default=None, help="capture device index or video file path")
     parser.add_argument("--orig-out", type=str, default=None, help="path to save grayscale capture")
     parser.add_argument("--heat-out", type=str, default=None, help="path to save flow heatmap video")
-    parser.add_argument("--weights", type=str, default=None, help="VoxelMorph checkpoint path")
+    parser.add_argument("--weights", type=str, default=None, help="TactMorph checkpoint path")
     parser.add_argument("--device", type=str, default=None, help="torch device, e.g. cpu or cuda")
     parser.add_argument("--rest-threshold", type=int, default=None, help="threshold for one-time rest marker centroid detection")
     parser.add_argument("--intensity-threshold", type=int, default=None, help="threshold for normal-force marker intensity heatmap")
@@ -803,7 +803,7 @@ if __name__ == "__main__":
         type=str,
         default=None,
         choices=("none", "area", "maxpool"),
-        help="preprocessing applied before VoxelMorph inference",
+        help="preprocessing applied before TactMorph inference",
     )
     parser.add_argument(
         "--model-input-size",

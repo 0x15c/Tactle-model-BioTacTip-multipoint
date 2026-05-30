@@ -38,7 +38,7 @@ def preprocess_registration_image(
     size: tuple[int, int] | None = None,
 ) -> np.ndarray:
     """
-    Prepare an image for VoxelMorph registration.
+    Prepare an image for TactMorph registration.
 
     mode:
         none    Keep the original image unless size is provided.

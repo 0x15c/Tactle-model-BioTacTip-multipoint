@@ -13,7 +13,7 @@ from centernet.centernet_model import CenterNetModel
 from tactile_prediction_biotactip import (
     draw_displacement_vectors,
     get_device,
-    get_voxelmorph_model,
+    get_tactmorph_model,
     gray_to_tensor,
     infer_warped_and_flow,
     parse_capture_source,
@@ -24,7 +24,7 @@ from tactile_prediction_biotactip import (
     sample_flow_at_points,
     tensor_to_gray_u8,
 )
-from voxelmorph.preprocessing import upsample_flow_to_shape
+from tactmorph.preprocessing import upsample_flow_to_shape
 
 
 @dataclass
@@ -41,7 +41,7 @@ class Sensor2CenterNetConfig:
     centroid_min_area: int = 2
     centroid_max_area: int = 5000
 
-    voxelmorph_weights_path: str = "voxelmorph/ckpt/new_sensor_voxelmorph2d_260.pt"
+    tactmorph_weights_path: str = "tactmorph/ckpt/new_sensor_tactmorph2d_260.pt"
     device: Optional[str] = None
     model_preprocess: str = "maxpool"
     model_input_size: tuple[int, int] = (64,64)
@@ -191,10 +191,10 @@ def blur_flow_field(flow, ksize):
 def main(cfg):
     device = get_device(cfg.device)
     centernet = get_centernet_model(cfg.centernet_weights_path, device)
-    voxelmorph = get_voxelmorph_model(cfg.voxelmorph_weights_path, device)
+    tactmorph = get_tactmorph_model(cfg.tactmorph_weights_path, device)
     print(f"Using device: {device}")
     print(f"CenterNet weights: {cfg.centernet_weights_path}")
-    print(f"VoxelMorph weights: {cfg.voxelmorph_weights_path}")
+    print(f"TactMorph weights: {cfg.tactmorph_weights_path}")
 
     cap = cv.VideoCapture(cfg.input_source)
     if not cap.isOpened():
@@ -267,7 +267,7 @@ def main(cfg):
 
             if device.type == "cuda":
                 torch.cuda.synchronize()
-            warped_model, flow_model = infer_warped_and_flow(voxelmorph, moving_tensor, rest_tensor)
+            warped_model, flow_model = infer_warped_and_flow(tactmorph, moving_tensor, rest_tensor)
             if device.type == "cuda":
                 torch.cuda.synchronize()
 
@@ -334,12 +334,12 @@ def main(cfg):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Sensor2 CenterNet + VoxelMorph displacement visualization")
+    parser = argparse.ArgumentParser(description="Sensor2 CenterNet + TactMorph displacement visualization")
     parser.add_argument("--config", type=str, default=None, help="JSON config")
     parser.add_argument("--save-config", type=str, default=None, help="write resolved config and exit")
     parser.add_argument("--input", type=str, default=None, help="camera index or video path")
     parser.add_argument("--centernet-weights", type=str, default=None, help="CenterNet checkpoint path")
-    parser.add_argument("--voxelmorph-weights", type=str, default=None, help="VoxelMorph checkpoint path")
+    parser.add_argument("--tactmorph-weights", type=str, default=None, help="TactMorph checkpoint path")
     parser.add_argument("--device", type=str, default=None, help="torch device, e.g. cpu or cuda")
     parser.add_argument("--model-preprocess", type=str, default=None, choices=("none", "area", "maxpool"))
     parser.add_argument("--model-input-size", type=int, default=None)
@@ -351,8 +351,8 @@ if __name__ == "__main__":
         cfg.input_source = parse_capture_source(args.input)
     if args.centernet_weights is not None:
         cfg.centernet_weights_path = args.centernet_weights
-    if args.voxelmorph_weights is not None:
-        cfg.voxelmorph_weights_path = args.voxelmorph_weights
+    if args.tactmorph_weights is not None:
+        cfg.tactmorph_weights_path = args.tactmorph_weights
     if args.device is not None:
         cfg.device = args.device
     if args.model_preprocess is not None:

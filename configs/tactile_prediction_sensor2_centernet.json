@@ -12,7 +12,7 @@
   "centroid_threshold": 0.2,
   "centroid_min_area": 2,
   "centroid_max_area": 5000,
-  "voxelmorph_weights_path": "voxelmorph/ckpt/new_sensor_voxelmorph2d_200.pt",
+  "tactmorph_weights_path": "tactmorph/ckpt/new_sensor_tactmorph2d_200.pt",
   "device": null,
   "model_preprocess": "maxpool",
   "model_input_size": [

@@ -1,1 +1,0 @@
-__all__ = ["VoxelMorph2D"]

@@ -3,7 +3,7 @@
   "output_original_path": "videos/output_original.mp4",
   "output_heatmap_path": "videos/output_from_online_cap.mp4",
   "video_codec": "XVID",
-  "model_weights_path": "voxelmorph/ckpt/biotactip_voxelmorph2d_120.pt",
+  "model_weights_path": "tactmorph/ckpt/biotactip_tactmorph2d_120.pt",
   "device": null,
   "model_preprocess": "maxpool",
   "model_input_size": [

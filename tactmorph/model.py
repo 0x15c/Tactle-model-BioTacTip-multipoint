@@ -86,7 +86,7 @@ class SpatialTransformer(nn.Module):
         return warped
 
 
-class VoxelMorph2D(nn.Module):
+class TactMorph2D(nn.Module):
     def __init__(self, in_channels=2, base_channels=16):
         super().__init__()
         self.unet = UNet2D(in_channels=in_channels, base_channels=base_channels)
