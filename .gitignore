@@ -11,3 +11,5 @@ utils/captured_frames
 *.jpg
 *.png
 synthetic_tps_dataset/
+**/__pycache__/
+**/checkpoints

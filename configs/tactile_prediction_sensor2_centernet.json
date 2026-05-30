@@ -1,0 +1,29 @@
+{
+  "input_source": "video.mp4",
+  "output_original_path": "videos/sensor2_centernet_probability.mp4",
+  "output_heatmap_path": "videos/sensor2_centernet_heatmaps.mp4",
+  "video_codec": "XVID",
+  "centernet_weights_path": "centernet/checkpoints/centernet_resnet9_e10.pth",
+  "centernet_input_size": [
+    360,
+    360
+  ],
+  "centernet_prob_threshold": 0.2,
+  "centroid_threshold": 0.2,
+  "centroid_min_area": 2,
+  "centroid_max_area": 5000,
+  "voxelmorph_weights_path": "voxelmorph/ckpt/new_sensor_voxelmorph2d_200.pt",
+  "device": null,
+  "model_preprocess": "maxpool",
+  "model_input_size": [
+    48,
+    48
+  ],
+  "frame_skip_init": 10,
+  "flow_blur_ksize": 3,
+  "flow_sample_radius": 2,
+  "vector_visual_scale": 1.0,
+  "max_disp_viz_mag": 5.0,
+  "overlay_alpha": 0.65,
+  "heatmap_alpha": 0.35
+}

@@ -25,7 +25,7 @@ class Config:
     video_codec: str = "XVID"
 
     # Learned displacement model
-    model_weights_path: str = "voxelmorph/ckpt/good_last.pt"
+    model_weights_path: str = "voxelmorph/ckpt/biotactip_voxelmorph2d_200.pt"
     device: Optional[str] = None
     model_preprocess: str = "maxpool"
     model_input_size: Tuple[int, int] = (32, 32)

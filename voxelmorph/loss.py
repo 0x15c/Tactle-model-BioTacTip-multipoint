@@ -157,12 +157,14 @@ def total_loss(
     flow,
     smoothness_weight=0.1,
     bending_weight=0.0,
+    argument_weight=0.0,
     sim_measure="MSE",
 ):
     sim = similarity_loss(fixed, warped, loss_type=sim_measure)
     smooth = smoothness_loss(flow)
     bending = bending_energy_loss(flow)
-    return sim + smoothness_weight * smooth + bending_weight * bending
+    argument, _ = beltrami_loss(flow)
+    return sim + smoothness_weight * smooth + bending_weight * bending + argument_weight * argument
 
 def mutual_information_loss(
     a,
@@ -232,3 +234,70 @@ def mutual_information_loss(
 
     # Minimize negative MI.
     return -mi.mean()
+
+def gradient_x(t):
+    # t: B x 1 x H x W
+    return t[:, :, :, 2:] - t[:, :, :, :-2]
+
+def gradient_y(t):
+    return t[:, :, 2:, :] - t[:, :, :-2, :]
+
+def beltrami_loss(flow, rho=0.0, eps=1e-6):
+    """
+    flow: B x 2 x H x W
+          flow[:, 0] = u
+          flow[:, 1] = v
+
+    Returns a penalty when the deformation map is close to local folding.
+    """
+
+    B, _, H, W = flow.shape
+    device = flow.device
+    dtype = flow.dtype
+
+    u = flow[:, 0:1]
+    v = flow[:, 1:2]
+
+    # Coordinate grid
+    y, x = torch.meshgrid(
+        torch.arange(H, device=device, dtype=dtype),
+        torch.arange(W, device=device, dtype=dtype),
+        indexing="ij"
+    )
+
+    x = x.view(1, 1, H, W)
+    y = y.view(1, 1, H, W)
+
+    X = x + u
+    Y = y + v
+
+    # Central differences. Shapes differ, so crop to common interior region.
+    X_x = gradient_x(X)[:, :, 1:-1, :]
+    Y_x = gradient_x(Y)[:, :, 1:-1, :]
+
+    X_y = gradient_y(X)[:, :, :, 1:-1]
+    Y_y = gradient_y(Y)[:, :, :, 1:-1]
+
+    # Because central difference used step size 2 pixels
+    X_x = X_x / 2.0
+    Y_x = Y_x / 2.0
+    X_y = X_y / 2.0
+    Y_y = Y_y / 2.0
+
+    # F_z = a + ib
+    Fz_real = 0.5 * (X_x + Y_y)
+    Fz_imag = 0.5 * (Y_x - X_y)
+
+    # F_zbar = c + id
+    Fzb_real = 0.5 * (X_x - Y_y)
+    Fzb_imag = 0.5 * (Y_x + X_y)
+
+    # |mu| = |F_zbar| / |F_z|
+    Fz_abs = torch.sqrt(Fz_real**2 + Fz_imag**2 + eps)
+    Fzb_abs = torch.sqrt(Fzb_real**2 + Fzb_imag**2 + eps)
+
+    mu_abs = Fzb_abs / Fz_abs
+
+    loss = F.relu(mu_abs - rho) ** 2
+
+    return loss.mean(), mu_abs

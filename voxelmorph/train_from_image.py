@@ -18,19 +18,19 @@ except ImportError as exc:
     ) from exc
 
 # select dir to images
-IMAGE_DIR = "../captured_frames/"
+IMAGE_DIR = "../new_sensor_dataset_4/"
 # e.g. "fixed.png" or None for random fixed images
-FIXED_IMAGE_NAME = "frame_000.jpg"
+FIXED_IMAGE_NAME = "frame_0.jpg"
 RESIZE_TO = None  # (width, height) or None to keep original size
 MODEL_PREPROCESS = "maxpool"  # "none", "area", or "maxpool"
-MODEL_INPUT_SIZE = (32, 32)  # (width, height), used when MODEL_PREPROCESS != "none"
+MODEL_INPUT_SIZE = (48, 48)  # (width, height), used when MODEL_PREPROCESS != "none"
 checkpoint_path = "./ckpt"
 
-batch_size = 32
+batch_size = 256
 epochs = 200
 learning_rate = 1e-3
-model_similarity_weight = 0.5
-use_original_similarity_loss = True
+model_similarity_weight = 1.0
+use_original_similarity_loss = False
 original_similarity_weight = 1.0 - model_similarity_weight
 # reg terms: for biotactip, use 5.0 and 1.0.
 bending_weight = 5.0
@@ -350,7 +350,7 @@ def main():
         if epoch % 20 == 0:
             os.makedirs(checkpoint_path, exist_ok=True)
             torch.save(model.state_dict(),
-                       f"{checkpoint_path}/biotactip_voxelmorph2d_{epoch}.pt")
+                       f"{checkpoint_path}/d_sight_voxelmorph2d_{epoch}.pt")
             print(f"Saved checkpoint to {checkpoint_path}")
 
     wandb.finish()
