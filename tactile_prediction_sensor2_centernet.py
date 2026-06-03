@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from centernet.centernet_model import CenterNetModel
+from force_prediction.PointNetRegressor import PointNetRegressor
 from tactile_prediction_biotactip import (
     draw_displacement_vectors,
     get_device,
@@ -53,6 +54,11 @@ class Sensor2CenterNetConfig:
     max_disp_viz_mag: float = 5.0
     overlay_alpha: float = 0.65
     heatmap_alpha: float = 0.35
+
+    force_model_path: Optional[str] = "force_prediction/outputs/pointnet_force/pointnet_force_regressor.pt"
+    show_force_prediction: bool = True
+    force_max_points: int = 128
+    force_xy_normalized: bool = True
 
 
 def load_config(path):
@@ -102,6 +108,79 @@ def get_centernet_model(weights_path, device):
     model.to(device)
     model.eval()
     return model
+
+
+def get_force_model(weights_path, device):
+    if not weights_path:
+        return None, {}
+
+    weights_path = Path(weights_path)
+    if not weights_path.exists():
+        print(f"Force model not found, disabling force prediction: {weights_path}")
+        return None, {}
+
+    try:
+        checkpoint = torch.load(weights_path, map_location=device, weights_only=False)
+    except TypeError:
+        checkpoint = torch.load(weights_path, map_location=device)
+
+    state = checkpoint.get("model_state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    input_dim = checkpoint.get("input_dim", 4) if isinstance(checkpoint, dict) else 4
+
+    model = PointNetRegressor(input_dim=input_dim)
+    model.load_state_dict(state, strict=True)
+    model.to(device)
+    model.eval()
+
+    metadata = checkpoint if isinstance(checkpoint, dict) else {}
+    return model, metadata
+
+
+def pad_or_trim_point_features(features, max_points):
+    features = features.astype(np.float32)
+    out = np.zeros((max_points, features.shape[1]), dtype=np.float32)
+    valid_count = min(features.shape[0], max_points)
+    if valid_count:
+        out[:valid_count] = features[:valid_count]
+    return out, valid_count
+
+
+@torch.no_grad()
+def predict_force_from_sparse_flow(
+    force_model,
+    rest_centroids,
+    displacement,
+    image_shape,
+    max_points,
+    xy_normalized,
+    device,
+):
+    if force_model is None or rest_centroids.size == 0:
+        return None
+
+    xy = rest_centroids.astype(np.float32).copy()
+    if xy_normalized:
+        height, width = image_shape
+        xy[:, 0] = xy[:, 0] / max(width - 1, 1)
+        xy[:, 1] = xy[:, 1] / max(height - 1, 1)
+
+    features = np.concatenate((xy, displacement.astype(np.float32)), axis=1)
+    features, _ = pad_or_trim_point_features(features, max_points)
+    x = torch.from_numpy(features)[None].to(device)
+    prediction = force_model(x)[0].detach().cpu().numpy()
+    return prediction.astype(np.float32)
+
+
+def draw_force_prediction(image, force_prediction, origin=(10, 104)):
+    if force_prediction is None:
+        cv.putText(image, "Force: disabled", origin, cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
+        return image
+
+    fx, fy, fz = force_prediction
+    x, y = origin
+    cv.putText(image, f"Fx={fx:.3f}, Fy={fy:.3f}", (x, y), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
+    cv.putText(image, f"Fz={fz:.3f}", (x, y + 20), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
+    return image
 
 
 def preprocess_frame_for_centernet(frame_bgr, input_size):
@@ -192,9 +271,18 @@ def main(cfg):
     device = get_device(cfg.device)
     centernet = get_centernet_model(cfg.centernet_weights_path, device)
     tactmorph = get_tactmorph_model(cfg.tactmorph_weights_path, device)
+    force_model, force_metadata = get_force_model(cfg.force_model_path, device) if cfg.show_force_prediction else (None, {})
+    if force_model is not None:
+        if force_metadata.get("max_points") is not None:
+            cfg.force_max_points = int(force_metadata["max_points"])
+        if force_metadata.get("xy_normalized") is not None:
+            cfg.force_xy_normalized = bool(force_metadata["xy_normalized"])
     print(f"Using device: {device}")
     print(f"CenterNet weights: {cfg.centernet_weights_path}")
     print(f"TactMorph weights: {cfg.tactmorph_weights_path}")
+    if force_model is not None:
+        print(f"Force model weights: {cfg.force_model_path}")
+        print(f"Force feature format: max_points={cfg.force_max_points}, xy_normalized={cfg.force_xy_normalized}")
 
     cap = cv.VideoCapture(cfg.input_source)
     if not cap.isOpened():
@@ -275,14 +363,25 @@ def main(cfg):
             flow = blur_flow_field(flow, cfg.flow_blur_ksize)
 
             displacement = sample_flow_at_points(flow, rest_centroids, cfg.flow_sample_radius)
+            force_prediction = predict_force_from_sparse_flow(
+                force_model,
+                rest_centroids,
+                displacement,
+                prob.shape,
+                cfg.force_max_points,
+                cfg.force_xy_normalized,
+                device,
+            )
             displacement_viz = displacement * cfg.vector_visual_scale
             mean_disp = displacement.mean(axis=0) if displacement.size else np.zeros(2, dtype=np.float32)
 
             displacement_heatmap = render_flow_heatmap(flow, cfg.max_disp_viz_mag)
             displacement_heatmap = draw_displacement_vectors(displacement_heatmap, rest_centroids, displacement_viz)
+            displacement_heatmap = draw_force_prediction(displacement_heatmap, force_prediction)
 
             overlay = render_centroid_overlay(frame, prob_heatmap, centroids, rest_centroids)
             overlay = draw_displacement_vectors(overlay, rest_centroids, displacement_viz)
+            overlay = draw_force_prediction(overlay, force_prediction, origin=(10, 72))
             cv.imshow("Sensor2 CenterNet Displacement Field", overlay)
             cv.imshow("Sensor2 CenterNet Flow Direction Phase", render_flow_phase(flow, cfg.max_disp_viz_mag))
             cv.imshow("Sensor2 CenterNet Inverse Warp", render_full_res_warp_comparison(probability_to_u8(rest_prob), prob_u8, flow))
@@ -344,6 +443,9 @@ if __name__ == "__main__":
     parser.add_argument("--model-preprocess", type=str, default=None, choices=("none", "area", "maxpool"))
     parser.add_argument("--model-input-size", type=int, default=None)
     parser.add_argument("--vector-scale", type=float, default=None)
+    parser.add_argument("--force-weights", type=str, default=None, help="PointNet force regressor checkpoint path")
+    parser.add_argument("--disable-force", action="store_true", help="disable PointNet force prediction")
+    parser.add_argument("--force-max-points", type=int, default=None, help="sparse point count expected by the force model")
     args = parser.parse_args()
 
     cfg = load_config(args.config) if args.config else Sensor2CenterNetConfig()
@@ -361,6 +463,12 @@ if __name__ == "__main__":
         cfg.model_input_size = (args.model_input_size, args.model_input_size)
     if args.vector_scale is not None:
         cfg.vector_visual_scale = args.vector_scale
+    if args.force_weights is not None:
+        cfg.force_model_path = args.force_weights
+    if args.disable_force:
+        cfg.show_force_prediction = False
+    if args.force_max_points is not None:
+        cfg.force_max_points = args.force_max_points
 
     if args.save_config is not None:
         save_config(args.save_config, cfg)

@@ -25,5 +25,9 @@
   "vector_visual_scale": 1.0,
   "max_disp_viz_mag": 5.0,
   "overlay_alpha": 0.65,
-  "heatmap_alpha": 0.35
+  "heatmap_alpha": 0.35,
+  "force_model_path": "force_prediction/outputs/pointnet_force/pointnet_force_regressor.pt",
+  "show_force_prediction": true,
+  "force_max_points": 128,
+  "force_xy_normalized": true
 }

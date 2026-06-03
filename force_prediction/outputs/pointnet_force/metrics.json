@@ -1,0 +1,11 @@
+{
+  "dataset": "force_prediction\\calibration_data_washed\\pointnet_force_dataset.pt",
+  "num_samples": 2010,
+  "train_samples": 1608,
+  "val_samples": 402,
+  "epochs": 100,
+  "batch_size": 64,
+  "learning_rate": 0.001,
+  "best_val_loss": 0.0008883848534410458,
+  "final_val_loss": 0.0008883848534410458
+}

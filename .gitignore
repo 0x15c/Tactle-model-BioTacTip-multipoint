@@ -14,3 +14,6 @@ utils/captured_frames
 synthetic_tps_dataset/
 **/__pycache__/
 **/checkpoints
+README_files/
+README.html
+force_prediction/calibration_data
