@@ -23,16 +23,16 @@ except ImportError as exc:
     ) from exc
 
 # select dir to images
-IMAGE_DIR = "../new_sensor_dataset_4/"
+IMAGE_DIR = "../captured_frames/"
 # e.g. "fixed.png" or None for random fixed images
-FIXED_IMAGE_NAME = "frame_0.jpg"
+FIXED_IMAGE_NAME = "frame_000.jpg"
 RESIZE_TO = None  # (width, height) or None to keep original size
 MODEL_PREPROCESS = "maxpool"  # "none", "area", or "maxpool"
-MODEL_INPUT_SIZE = (48, 48)  # (width, height), used when MODEL_PREPROCESS != "none"
+MODEL_INPUT_SIZE = (64, 64)  # (width, height), used when MODEL_PREPROCESS != "none"
 checkpoint_path = "./ckpt"
 
 batch_size = 256
-epochs = 200
+epochs = 100
 learning_rate = 1e-3
 model_similarity_weight = 1.0
 use_original_similarity_loss = False
@@ -44,7 +44,7 @@ seed = 1313213
 drop_last = True
 
 WANDB_PROJECT = "tactmorph_biotactip"
-WANDB_RUN_NAME = "tactmorph_biotactip_new_sensor"
+WANDB_RUN_NAME = "tactmorph_biotactip"
 HFLIP_PROB = 0.65
 ROTATE_CHOICES = (0, 1, 3)  # 0, +90, -90 (k=3)
 
