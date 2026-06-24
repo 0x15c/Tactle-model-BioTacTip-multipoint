@@ -25,7 +25,7 @@ class Config:
     video_codec: str = "XVID"
 
     # Learned shared-feature displacement model
-    model_weights_path: str = "tactmorph_shared_features/tactmorph_shared_features/ckpt/shared_feature_tactmorph2d_final.pt"
+    model_weights_path: str = "tactmorph_shared_features/tactmorph_shared_features/ckpt/shared_feature_tactmorph2d_60.pt"
     device: Optional[str] = None
     model_preprocess: str = "maxpool"
     model_input_size: Tuple[int, int] = (64, 64)
@@ -57,6 +57,9 @@ class Config:
     flow_sample_radius: int = 2
     vector_visual_scale: float = 1.0
     max_disp_viz_mag: float = 5.0
+    mesh_spacing: int = 16
+    mesh_flow_scale: float = 1.0
+    mesh_line_thickness: int = 1
 
     # Normal-force / marker-intensity heatmap
     threshold_bin: int = 100
@@ -144,9 +147,9 @@ def get_shared_feature_model(weights_path: str, device: torch.device, cfg: Confi
     except TypeError:
         state = torch.load(checkpoint, map_location=device)
 
-    if not isinstance(state, dict) or state.get("architecture") != "shared_feature_tactmorph_2d_v1":
+    if not isinstance(state, dict) or state.get("architecture") != "shared_feature_tactmorph_2d_v2_flow_pyramid":
         raise RuntimeError(
-            "Expected a shared_feature_tactmorph_2d_v1 checkpoint. "
+            "Expected a shared_feature_tactmorph_2d_v2_flow_pyramid checkpoint. "
             "Train it with tactmorph_shared_features/train_shared_features.py."
         )
 
@@ -378,11 +381,12 @@ def infer_warped_and_flow(
     model: SharedFeatureTactMorph2D,
     moving_tensor: torch.Tensor,
     fixed_tensor: torch.Tensor,
-) -> tuple[np.ndarray, np.ndarray]:
-    warped, flow = model(moving_tensor, fixed_tensor)
+) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
+    warped, flow, flow_pyramid = model(moving_tensor, fixed_tensor, return_pyramid=True)
     warped_np = warped.squeeze().detach().cpu().numpy()
     flow_np = flow.squeeze(0).detach().cpu().numpy()
-    return warped_np, flow_np
+    flow_pyramid_np = [flow_stage.squeeze(0).detach().cpu().numpy() for flow_stage in flow_pyramid]
+    return warped_np, flow_np, flow_pyramid_np
 
 
 def blur_flow_field(flow: np.ndarray, ksize: int) -> np.ndarray:
@@ -452,6 +456,40 @@ def render_flow_heatmap(flow: np.ndarray, max_disp_viz_mag: float) -> np.ndarray
     denom = max(max_disp_viz_mag, float(flow_mag.max()), 1e-6)
     flow_norm = np.clip(flow_mag / denom, 0.0, 1.0)
     return cv.applyColorMap(np.uint8(flow_norm * 255), cv.COLORMAP_PLASMA)
+
+
+def render_flow_pyramid_panel(
+    flow_pyramid: list[np.ndarray],
+    target_shape: tuple[int, int],
+    max_disp_viz_mag: float,
+) -> np.ndarray:
+    panels = []
+    for stage_idx, flow_stage in enumerate(flow_pyramid):
+        flow_display = upsample_flow_to_shape(flow_stage, target_shape)
+        panel = render_flow_heatmap(flow_display, max_disp_viz_mag)
+        stage_h, stage_w = flow_stage.shape[-2:]
+        cv.putText(
+            panel,
+            f"stage {stage_idx}: {stage_w}x{stage_h}",
+            (10, 20),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 255),
+            1,
+            cv.LINE_AA,
+        )
+        panels.append(panel)
+
+    if not panels:
+        return np.zeros((*target_shape, 3), dtype=np.uint8)
+
+    while len(panels) % 2 != 0:
+        panels.append(np.zeros_like(panels[0]))
+
+    rows = []
+    for start in range(0, len(panels), 2):
+        rows.append(np.concatenate(panels[start : start + 2], axis=1))
+    return np.concatenate(rows, axis=0)
 
 
 def magnitude_weighted_argument_loss_np(flow: np.ndarray, eps: float = 1e-6) -> float:
@@ -528,6 +566,64 @@ def render_flow_phase(flow: np.ndarray, max_disp_viz_mag: float) -> np.ndarray:
         cv.LINE_AA,
     )
     return phase_bgr
+
+
+def render_deformation_mesh(
+    flow: np.ndarray,
+    spacing: int = 16,
+    flow_scale: float = 1.0,
+    line_thickness: int = 1,
+) -> np.ndarray:
+    height, width = flow.shape[1:]
+    spacing = max(2, int(spacing))
+    line_thickness = max(1, int(line_thickness))
+
+    mesh = np.zeros((height, width, 3), dtype=np.uint8)
+    xs = np.arange(0, width, spacing, dtype=np.int32)
+    ys = np.arange(0, height, spacing, dtype=np.int32)
+    if xs[-1] != width - 1:
+        xs = np.append(xs, width - 1)
+    if ys[-1] != height - 1:
+        ys = np.append(ys, height - 1)
+
+    undeformed_color = (45, 45, 45)
+    deformed_color = (255, 210, 0)
+
+    for x in xs:
+        cv.line(mesh, (int(x), 0), (int(x), height - 1), undeformed_color, 1, cv.LINE_AA)
+    for y in ys:
+        cv.line(mesh, (0, int(y)), (width - 1, int(y)), undeformed_color, 1, cv.LINE_AA)
+
+    def displaced_points(x_coords, y_coords):
+        x_coords = np.asarray(x_coords, dtype=np.int32)
+        y_coords = np.asarray(y_coords, dtype=np.int32)
+        dx = flow[0, y_coords, x_coords] * flow_scale
+        dy = flow[1, y_coords, x_coords] * flow_scale
+        px = np.clip(np.rint(x_coords.astype(np.float32) + dx), 0, width - 1).astype(np.int32)
+        py = np.clip(np.rint(y_coords.astype(np.float32) + dy), 0, height - 1).astype(np.int32)
+        return np.stack((px, py), axis=1).reshape((-1, 1, 2))
+
+    all_x = np.arange(width, dtype=np.int32)
+    all_y = np.arange(height, dtype=np.int32)
+    for y in ys:
+        y_coords = np.full_like(all_x, int(y))
+        cv.polylines(mesh, [displaced_points(all_x, y_coords)], False, deformed_color, line_thickness, cv.LINE_AA)
+    for x in xs:
+        x_coords = np.full_like(all_y, int(x))
+        cv.polylines(mesh, [displaced_points(x_coords, all_y)], False, deformed_color, line_thickness, cv.LINE_AA)
+
+    cv.putText(mesh, "Deformation mesh", (10, 20), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv.LINE_AA)
+    cv.putText(
+        mesh,
+        "cyan: rest grid + flow",
+        (10, 42),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 255, 255),
+        1,
+        cv.LINE_AA,
+    )
+    return mesh
 
 
 def warp_gray_with_flow(gray: np.ndarray, flow: np.ndarray) -> np.ndarray:
@@ -666,7 +762,7 @@ def main(cfg: Config):
     circular_mask = create_circular_mask(frame_shape, cfg.center, cfg.radius)
 
     Path(cfg.output_heatmap_path).parent.mkdir(parents=True, exist_ok=True)
-    combined_heatmap_size = (cropped_size[0] * 3, cropped_size[1])
+    combined_heatmap_size = (cropped_size[0] * 4, cropped_size[1])
     heatmap_output = cv.VideoWriter(cfg.output_heatmap_path, fourcc, capture_fps, combined_heatmap_size, True)
 
     xspace = np.linspace(0, cropped_size[0] - 1, cropped_size[0])
@@ -713,6 +809,17 @@ def main(cfg: Config):
 
         if rest_tensor is None:
             displacement_heatmap = cv.cvtColor(grey_frame_corrected, cv.COLOR_GRAY2BGR)
+            mesh_panel = np.zeros_like(displacement_heatmap)
+            cv.putText(
+                mesh_panel,
+                "Deformation mesh",
+                (10, 20),
+                cv.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 255),
+                1,
+                cv.LINE_AA,
+            )
             cv.putText(
                 displacement_heatmap,
                 f"Capturing rest frame in {max(0, cfg.frame_skip_init - frame_count)} frames",
@@ -733,19 +840,33 @@ def main(cfg: Config):
             moving_model_gray = tensor_to_gray_u8(moving_tensor)
             if device.type == "cuda":
                 torch.cuda.synchronize()
-            warped_current_model, flow_model = infer_warped_and_flow(model, moving_tensor, rest_tensor)
+            warped_current_model, flow_model, flow_pyramid_model = infer_warped_and_flow(model, moving_tensor, rest_tensor)
             if device.type == "cuda":
                 torch.cuda.synchronize()
 
             flow = upsample_flow_to_shape(flow_model, grey_frame_corrected.shape)
             flow = blur_flow_field(flow, cfg.flow_blur_ksize)
             cv.imshow("Flow Direction Phase", render_flow_phase(flow, cfg.max_disp_viz_mag))
+            cv.imshow(
+                "Flow Pyramid Stages",
+                render_flow_pyramid_panel(
+                    flow_pyramid_model,
+                    grey_frame_corrected.shape,
+                    cfg.max_disp_viz_mag,
+                ),
+            )
             displacement = sample_flow_at_points(flow, rest_centroids, cfg.flow_sample_radius)
             displacement_viz = displacement * cfg.vector_visual_scale
             mean_disp = displacement.mean(axis=0) if displacement.size else np.zeros(2, dtype=np.float32)
 
             displacement_heatmap = render_flow_heatmap(flow, cfg.max_disp_viz_mag)
             displacement_heatmap = draw_displacement_vectors(displacement_heatmap, rest_centroids, displacement_viz)
+            mesh_panel = render_deformation_mesh(
+                flow,
+                spacing=cfg.mesh_spacing,
+                flow_scale=cfg.mesh_flow_scale,
+                line_thickness=cfg.mesh_line_thickness,
+            )
 
             overlay = cv.cvtColor(grey_frame_corrected, cv.COLOR_GRAY2BGR)
             overlay = draw_displacement_vectors(overlay, rest_centroids, displacement_viz)
@@ -785,7 +906,7 @@ def main(cfg: Config):
         cv.putText(displacement_heatmap, f"T={float(timenow):.2f}", (10, 80), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv.LINE_AA)
 
         input_panel = gray_panel(grey_frame_corrected, "Input")
-        combined_heatmap = np.concatenate((input_panel, displacement_heatmap, intensity_heatmap), axis=1)
+        combined_heatmap = np.concatenate((input_panel, displacement_heatmap, mesh_panel, intensity_heatmap), axis=1)
 
         cv.imshow("raw", frame)
         cv.imshow("tactile_heatmaps", combined_heatmap)
@@ -815,6 +936,9 @@ if __name__ == "__main__":
     parser.add_argument("--intensity-threshold", type=int, default=None, help="threshold for normal-force marker intensity heatmap")
     parser.add_argument("--intensity-sigma", type=float, default=None, help="Gaussian smoothing sigma for normal-force heatmap")
     parser.add_argument("--vector-scale", type=float, default=None, help="visual-only multiplier for sampled displacement vectors")
+    parser.add_argument("--mesh-spacing", type=int, default=None, help="pixel spacing of the deformation mesh")
+    parser.add_argument("--mesh-scale", type=float, default=None, help="visual-only multiplier for mesh deformation")
+    parser.add_argument("--mesh-thickness", type=int, default=None, help="line thickness for the deformation mesh")
     parser.add_argument("--base-channels", type=int, default=None, help="fallback base channel count if checkpoint config is unavailable")
     parser.add_argument(
         "--model-preprocess",
@@ -851,6 +975,12 @@ if __name__ == "__main__":
         cfg.gaussian_sigma = args.intensity_sigma
     if args.vector_scale is not None:
         cfg.vector_visual_scale = args.vector_scale
+    if args.mesh_spacing is not None:
+        cfg.mesh_spacing = args.mesh_spacing
+    if args.mesh_scale is not None:
+        cfg.mesh_flow_scale = args.mesh_scale
+    if args.mesh_thickness is not None:
+        cfg.mesh_line_thickness = args.mesh_thickness
     if args.base_channels is not None:
         cfg.base_channels = args.base_channels
     if args.model_preprocess is not None:

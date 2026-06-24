@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tactmorph.loss import beltrami_loss, bending_energy_loss, similarity_loss  # noqa: E402
+from tactmorph.loss import bending_energy_loss, similarity_loss  # noqa: E402
 from tactmorph.preprocessing import preprocess_registration_image  # noqa: E402
 from tactmorph_shared_features.model import SharedFeatureTactMorph2D  # noqa: E402
 
@@ -31,6 +31,15 @@ def parse_size(value):
     if len(parts) == 2:
         return (int(parts[0]), int(parts[1]))
     raise argparse.ArgumentTypeError(f"Invalid size: {value}")
+
+
+def parse_float_list(value):
+    if isinstance(value, (list, tuple)):
+        return [float(v) for v in value]
+    parts = [part.strip() for part in str(value).replace(";", ",").split(",") if part.strip()]
+    if not parts:
+        raise argparse.ArgumentTypeError("Expected one or more comma-separated float values.")
+    return [float(part) for part in parts]
 
 
 def load_gray(path, resize_to=None):
@@ -54,7 +63,6 @@ def load_images_in_memory(image_dir, resize_to, preprocess_mode, model_input_siz
 
     names = []
     model_tensors = []
-    original_tensors = []
     for path in files:
         original = load_gray(path, resize_to=resize_to)
         if preprocess_mode != "none":
@@ -68,9 +76,8 @@ def load_images_in_memory(image_dir, resize_to, preprocess_mode, model_input_siz
 
         names.append(path.name)
         model_tensors.append(torch.from_numpy(model_img)[None, ...])
-        original_tensors.append(torch.from_numpy(original)[None, ...])
 
-    return names, model_tensors, original_tensors
+    return names, model_tensors
 
 
 def build_batch(tensors, batch_indices, fixed_tensor=None):
@@ -92,51 +99,36 @@ def resize_to_square(img, square_size):
     ).squeeze(0)
 
 
-def augment_pairs_with_original(
+def augment_pairs(
     moving,
     fixed,
-    moving_original,
-    fixed_original,
     hflip_prob,
     rotate_choices,
 ):
     model_square_size = int(np.min(moving.shape[-2:]))
-    original_square_size = int(np.min(moving_original.shape[-2:]))
 
     new_moving = []
     new_fixed = []
-    new_moving_original = []
-    new_fixed_original = []
 
     for i in range(moving.shape[0]):
         m = moving[i]
         f = fixed[i]
-        mo = moving_original[i]
-        fo = fixed_original[i]
 
         k = random.choice(rotate_choices)
         if k != 0:
             m = torch.rot90(m, k=k, dims=(1, 2))
             f = torch.rot90(f, k=k, dims=(1, 2))
-            mo = torch.rot90(mo, k=k, dims=(1, 2))
-            fo = torch.rot90(fo, k=k, dims=(1, 2))
 
         if random.random() < hflip_prob:
             m = torch.flip(m, dims=(2,))
             f = torch.flip(f, dims=(2,))
-            mo = torch.flip(mo, dims=(2,))
-            fo = torch.flip(fo, dims=(2,))
 
         new_moving.append(resize_to_square(m, model_square_size))
         new_fixed.append(resize_to_square(f, model_square_size))
-        new_moving_original.append(resize_to_square(mo, original_square_size))
-        new_fixed_original.append(resize_to_square(fo, original_square_size))
 
     return (
         torch.stack(new_moving, dim=0),
         torch.stack(new_fixed, dim=0),
-        torch.stack(new_moving_original, dim=0),
-        torch.stack(new_fixed_original, dim=0),
     )
 
 
@@ -193,6 +185,41 @@ def make_training_preview(moving, fixed, warped, flow):
     )
 
 
+def expand_stage_weights(weights, num_stages, name):
+    if len(weights) == 1:
+        return weights * num_stages
+    if len(weights) != num_stages:
+        raise ValueError(f"{name} must contain either 1 value or {num_stages} values; got {len(weights)}.")
+    return weights
+
+
+def staged_registration_loss(model, moving, fixed, flow_pyramid, args, similarity_weights, bending_weights):
+    total = torch.zeros((), dtype=moving.dtype, device=moving.device)
+    stage_metrics = []
+
+    for stage_idx, flow_stage in enumerate(flow_pyramid):
+        flow_full = resize_flow_torch(flow_stage, fixed.shape[-2:])
+        warped_stage = model.transformer(moving, flow_full)
+        sim_loss = similarity_loss(fixed, warped_stage, loss_type=args.similarity)
+        bend_loss = bending_energy_loss(flow_stage)
+        stage_loss = (
+            sim_loss * args.model_similarity_weight * similarity_weights[stage_idx]
+            + bend_loss * args.bending_weight * bending_weights[stage_idx]
+        )
+        total = total + stage_loss
+        stage_metrics.append(
+            {
+                "similarity": sim_loss,
+                "bending": bend_loss,
+                "loss": stage_loss,
+                "flow_magnitude_mean": torch.linalg.vector_norm(flow_full, dim=1).mean(),
+                "shape": tuple(flow_stage.shape[-2:]),
+            }
+        )
+
+    return total, stage_metrics
+
+
 def save_checkpoint(path, model, optimizer, epoch, args):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -200,7 +227,7 @@ def save_checkpoint(path, model, optimizer, epoch, args):
     torch.save(
         {
             "epoch": epoch,
-            "architecture": "shared_feature_tactmorph_2d_v1",
+            "architecture": "shared_feature_tactmorph_2d_v2_flow_pyramid",
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "config": config,
@@ -222,10 +249,9 @@ def main():
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--similarity", choices=("MSE", "NCC", "mi"), default="NCC")
     parser.add_argument("--model-similarity-weight", type=float, default=1.0)
-    parser.add_argument("--use-original-similarity-loss", action="store_true")
-    parser.add_argument("--original-similarity-weight", type=float, default=0.0)
     parser.add_argument("--bending-weight", type=float, default=1.0)
-    parser.add_argument("--argument-weight", type=float, default=0.0)
+    parser.add_argument("--stage-similarity-weights", type=parse_float_list, default=[0.125, 0.25, 0.5, 1.0])
+    parser.add_argument("--stage-bending-weights", type=parse_float_list, default=[0.125, 0.25, 0.5, 1.0])
     parser.add_argument("--hflip-prob", type=float, default=0.65)
     parser.add_argument("--rotate-choices", type=int, nargs="*", default=[0, 1, 3])
     parser.add_argument("--seed", type=int, default=42)
@@ -248,7 +274,7 @@ def main():
     np.random.seed(args.seed)
 
     device = torch.device(args.device) if args.device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    names, tensors, original_tensors = load_images_in_memory(
+    names, tensors = load_images_in_memory(
         args.image_dir,
         resize_to=args.resize_to,
         preprocess_mode=args.model_preprocess,
@@ -256,14 +282,12 @@ def main():
     )
 
     fixed_tensor = None
-    fixed_original_tensor = None
     if args.fixed_image_name:
         try:
             fixed_index = names.index(args.fixed_image_name)
         except ValueError as exc:
             raise ValueError(f"Fixed image '{args.fixed_image_name}' not found in {args.image_dir}") from exc
         fixed_tensor = tensors[fixed_index]
-        fixed_original_tensor = original_tensors[fixed_index]
 
     model = SharedFeatureTactMorph2D(base_channels=args.base_channels).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
@@ -275,7 +299,7 @@ def main():
             checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
         except TypeError:
             checkpoint = torch.load(args.resume, map_location=device)
-        if checkpoint.get("architecture") != "shared_feature_tactmorph_2d_v1":
+        if checkpoint.get("architecture") != "shared_feature_tactmorph_2d_v2_flow_pyramid":
             raise RuntimeError(f"Unsupported checkpoint architecture: {checkpoint.get('architecture')}")
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -306,6 +330,15 @@ def main():
     print(f"Model input: {args.model_input_size}, base_channels: {args.base_channels}")
     print(f"Parameters: total={total_params:,}, trainable={trainable_params:,}")
 
+    with torch.no_grad():
+        dummy = torch.zeros(1, 1, args.model_input_size[1], args.model_input_size[0], device=device)
+        _, _, dummy_pyramid = model(dummy, dummy, return_pyramid=True)
+    stage_similarity_weights = expand_stage_weights(args.stage_similarity_weights, len(dummy_pyramid), "stage similarity weights")
+    stage_bending_weights = expand_stage_weights(args.stage_bending_weights, len(dummy_pyramid), "stage bending weights")
+    print(f"Flow pyramid sizes: {[tuple(flow.shape[-2:]) for flow in dummy_pyramid]}")
+    print(f"Stage similarity weights: {stage_similarity_weights}")
+    print(f"Stage bending weights: {stage_bending_weights}")
+
     for epoch in range(start_epoch, args.epochs + 1):
         perm = list(range(num_samples))
         random.shuffle(perm)
@@ -321,41 +354,25 @@ def main():
                 continue
 
             moving, fixed = build_batch(tensors, batch_indices, fixed_tensor=fixed_tensor)
-            moving_original, fixed_original = build_batch(
-                original_tensors,
-                batch_indices,
-                fixed_tensor=fixed_original_tensor,
-            )
             moving = moving.to(device)
             fixed = fixed.to(device)
-            moving_original = moving_original.to(device)
-            fixed_original = fixed_original.to(device)
 
-            moving, fixed, moving_original, fixed_original = augment_pairs_with_original(
+            moving, fixed = augment_pairs(
                 moving,
                 fixed,
-                moving_original,
-                fixed_original,
                 hflip_prob=args.hflip_prob,
                 rotate_choices=args.rotate_choices,
             )
 
-            warped, flow = model(moving, fixed)
-            model_sim_loss = similarity_loss(fixed, warped, loss_type=args.similarity)
-            if args.use_original_similarity_loss:
-                flow_original = resize_flow_torch(flow, fixed_original.shape[-2:])
-                warped_original = model.transformer(moving_original, flow_original)
-                original_sim_loss = similarity_loss(fixed_original, warped_original, loss_type=args.similarity)
-            else:
-                original_sim_loss = torch.zeros((), dtype=model_sim_loss.dtype, device=device)
-
-            bend_loss = bending_energy_loss(flow)
-            arg_loss, _ = beltrami_loss(flow)
-            loss = (
-                model_sim_loss * args.model_similarity_weight
-                + original_sim_loss * args.original_similarity_weight
-                + bend_loss * args.bending_weight
-                + arg_loss * args.argument_weight
+            warped, flow, flow_pyramid = model(moving, fixed, return_pyramid=True)
+            loss, stage_metrics = staged_registration_loss(
+                model,
+                moving,
+                fixed,
+                flow_pyramid,
+                args,
+                stage_similarity_weights,
+                stage_bending_weights,
             )
 
             optimizer.zero_grad()
@@ -367,15 +384,18 @@ def main():
 
             metrics = {
                 "train/loss": loss.item(),
-                "train/model_sim_loss": model_sim_loss.item(),
-                "train/original_sim_loss": original_sim_loss.item(),
-                "train/bending_loss": bend_loss.item(),
-                "train/argument_loss": arg_loss.item(),
+                "train/final_similarity_loss": stage_metrics[-1]["similarity"].item(),
+                "train/final_bending_loss": stage_metrics[-1]["bending"].item(),
                 "train/flow_magnitude_mean": torch.linalg.vector_norm(flow, dim=1).mean().item(),
                 "train/learning_rate": optimizer.param_groups[0]["lr"],
                 "train/global_step": global_step,
                 "epoch": epoch,
             }
+            for stage_idx, stage in enumerate(stage_metrics):
+                metrics[f"train/stage_{stage_idx}_similarity_loss"] = stage["similarity"].item()
+                metrics[f"train/stage_{stage_idx}_bending_loss"] = stage["bending"].item()
+                metrics[f"train/stage_{stage_idx}_weighted_loss"] = stage["loss"].item()
+                metrics[f"train/stage_{stage_idx}_flow_magnitude_mean"] = stage["flow_magnitude_mean"].item()
             if wandb is not None:
                 wandb.log(metrics, step=global_step)
                 if (
