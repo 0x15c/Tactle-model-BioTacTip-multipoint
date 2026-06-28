@@ -63,8 +63,15 @@ class FusionUnit2D(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.block = nn.Sequential(
-            ConvUnit2D(in_channels, out_channels),
-            ConvUnit2D(out_channels, out_channels),
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            # optional more layers
+            # nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            # nn.LeakyReLU(0.2, inplace=True),
+            # nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            # nn.LeakyReLU(0.2, inplace=True),
         )
 
     def forward(self, *features):
@@ -102,9 +109,9 @@ class RegistrationDecoder2D(nn.Module):
         )
         self.flow0_delta = nn.Conv2d(c1, 2, kernel_size=3, padding=1)
 
-    @staticmethod
-    def upsample_to(x, reference):
-        return F.interpolate(x, size=reference.shape[-2:], mode="bilinear", align_corners=False)
+    # @staticmethod
+    # def upsample_to(x, reference):
+    #     return F.interpolate(x, size=reference.shape[-2:], mode="bilinear", align_corners=False)
 
     @staticmethod
     def upsample_flow_to(flow, reference):
@@ -127,15 +134,15 @@ class RegistrationDecoder2D(nn.Module):
         flow3 = self.flow3(x)
 
         flow3_up = self.upsample_flow_to(flow3, m2)
-        x = self.dec2(self.upsample_to(self.up2(x), m2), m2, f2, flow3_up)
+        x = self.dec2(self.up2(x), m2, f2, flow3_up)
         flow2 = flow3_up + self.flow2_delta(x)
 
         flow2_up = self.upsample_flow_to(flow2, m1)
-        x = self.dec1(self.upsample_to(self.up1(x), m1), m1, f1, flow2_up)
+        x = self.dec1(self.up1(x), m1, f1, flow2_up)
         flow1 = flow2_up + self.flow1_delta(x)
 
         flow1_up = self.upsample_flow_to(flow1, m0)
-        x = self.dec0(self.upsample_to(self.up0(x), m0), m0, f0, flow1_up)
+        x = self.dec0(self.up0(x), m0, f0, flow1_up)
         x = self.refine(x)
         flow0 = flow1_up + self.flow0_delta(x)
         return [flow3, flow2, flow1, flow0]
